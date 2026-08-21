@@ -114,7 +114,17 @@ store), and a command to retrieve a stored meeting's transcript.
 **M4 — Speaker-labeling web UI**
 FastAPI app: list stored meetings, open one to see its transcript with audio playback synced to
 turns, click a speaker's placeholder label to rename it (applies to every turn for that speaker in
-that meeting), persisted back to SQLite. Checkpoint milestone (see §8).
+that meeting), persisted back to SQLite. Ingestion is still CLI-only at this point (`ingest` from
+M3) — the web UI only views and labels meetings that already exist. Checkpoint milestone (see §8).
+
+**M5 — Browser upload & ingest**
+Add upload to the web UI itself, so ingestion no longer requires the terminal: pick/drop an audio
+file in the browser, it runs the M3 ingest pipeline (diarize + transcribe + store), and the new
+meeting appears in the list. Deliberately deferred past M4 rather than folded into it, since it
+adds real scope on top of view/label: a long-running request (diarization + ASR takes on the order
+of a minute per few minutes of audio) needs either a background job with progress polling or a
+held-open request with a loading state, plus in-browser error handling for bad files. Rubric to be
+written (with the user) before this milestone is implemented, per the working policy in CLAUDE.md.
 
 ## 6. Non-functional requirements
 

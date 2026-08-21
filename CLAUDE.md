@@ -3,8 +3,8 @@
 See `SPEC.md` for the full spec and milestone plan, and `VERIFICATION.md` for the per-milestone
 acceptance rubric.
 
-Work through the milestones in `SPEC.md` in order (M1, M2, M3, M4 — M0 is already complete). For
-each milestone:
+Work through the milestones in `SPEC.md` in order (M1, M2, M3, M4, M5 — M0 is already complete).
+For each milestone:
 
 1. **Confirm the rubric exists.** Before writing any code for a milestone, check that
    `VERIFICATION.md` has a section for it. If it doesn't, stop and write that section first
