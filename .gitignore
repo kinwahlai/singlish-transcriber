@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Client meeting recordings and derived data - never committed
+samples/
+*.m4a
+*.wav
+*.mp3
+*.sqlite
+*.db
+verification-evidence/
