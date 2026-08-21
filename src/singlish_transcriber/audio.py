@@ -1,5 +1,6 @@
 """Audio preprocessing: normalize arbitrary input formats to 16kHz mono WAV via ffmpeg."""
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -7,6 +8,26 @@ from pathlib import Path
 
 class AudioConversionError(Exception):
     pass
+
+
+def get_duration_seconds(input_path: str) -> float:
+    """Return the audio duration in seconds via ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(input_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AudioConversionError(
+            f"ffprobe failed to read duration of {input_path!r}: {result.stderr.strip()}"
+        )
+    return float(result.stdout.strip())
 
 
 def to_wav16k_mono(input_path: str) -> str:
@@ -19,8 +40,6 @@ def to_wav16k_mono(input_path: str) -> str:
         raise FileNotFoundError(f"audio file not found: {input_path}")
 
     fd, out_path = tempfile.mkstemp(suffix=".wav", prefix="singlish_transcriber_")
-    import os
-
     os.close(fd)
 
     result = subprocess.run(

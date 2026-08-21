@@ -186,3 +186,109 @@ VERIFICATION.md and would have added GPU load without new verification value giv
 headroom margin already observed.
 
 M3, M4 were explicitly out of scope for this run and are unimplemented — not evaluated here.
+
+---
+
+# M3 section (this run)
+
+Scope of this run: **M3 only** ("Persistence"), per verification request. M1/M2 sections above are
+preserved unchanged from prior verification sessions. M4 was explicitly out of scope and not
+touched — it is not yet implemented.
+
+Environment check: `uv sync` ran clean (236 packages resolved, 229 checked, no errors).
+`samples/mixed_language_31-34.m4a` confirmed present. GPU idle baseline before testing: 0 MiB /
+8188 MiB used. `sqlite3` CLI confirmed installed (`/usr/bin/sqlite3`, version 3.45.1) and used
+directly against the database file for every inspection below — no reliance on the tool's own
+reporting of its writes. All commands used an isolated, freshly-created database path (not the
+default `~/.local/share/singlish-transcriber/db.sqlite`) so this run neither depended on nor
+polluted any prior state:
+`/tmp/claude-1000/.../scratchpad/m3_verify.sqlite`.
+
+## M3 — Persistence
+
+- [x] **Run the ingest command against a sample recording, then query the SQLite file directly
+      and confirm a `meetings` row, at least one `speakers` row, and multiple `turns` rows were
+      created with sensible values.**
+      ✓ — `uv run singlish-transcriber ingest samples/mixed_language_31-34.m4a --db <isolated
+      path>` exited 0 in 79s, printed the new meeting id (`1`) to stdout. Queried the DB directly
+      with the `sqlite3` CLI (not via the tool's own `show` command): `select * from meetings`
+      returned exactly one row (`id=1, filename=samples/mixed_language_31-34.m4a,
+      duration_seconds=180.015, created_at=2026-08-21T16:17:20...`); `select * from speakers`
+      returned 2 rows (`SPEAKER_00`, `SPEAKER_01`, both correctly scoped to `meeting_id=1`);
+      `select count(*) from turns` returned 42, and a direct SQL check
+      (`select count(*) from turns where start_seconds >= end_seconds`) returned 0, confirming
+      `start < end` holds for every stored turn. Evidence:
+      `verification-evidence/M3-ingest1-stdout.txt`, `M3-ingest1-stderr.txt`,
+      `M3-ingest-db-inspection.txt` (raw `sqlite3` query output).
+
+- [x] **Run the retrieval command for that meeting's id and confirm it reconstructs the same
+      transcript (start/end/speaker/text per turn) that was ingested.**
+      ✓ — `uv run singlish-transcriber show 1 --db <isolated path>` exited 0 and printed valid JSON
+      with `id`, `filename`, `duration_seconds`, `created_at`, and a 42-element `turns` array, each
+      turn with `start`/`end`/`speaker_label`/`speaker_display_name`/`text`. Programmatically
+      diffed all 42 turns from this JSON output against a fresh `sqlite3 -json` query joining
+      `turns`/`speakers` directly against the raw database (not through the tool) — 0 mismatches
+      across every field (start, end, speaker_label, text) for all 42 turns, not just a spot-check
+      of the first few. Evidence: `verification-evidence/M3-show-meeting1-stdout.txt` (diff script
+      output showed `mismatches: 0`, captured inline above; raw JSON preserved in the evidence
+      file).
+
+- [x] **Restart the process entirely (kill and re-run, not just re-call a function in the same
+      process) and confirm the previously ingested meeting is still retrievable.**
+      ✓ — Ran `show 1` a second time in a brand-new `uv run` invocation (new PID, new Python
+      interpreter, new sqlite3 connection — no shared memory with the ingest process, which had
+      already exited), several seconds after the first `show`. Output was byte-for-byte identical
+      to the first `show` invocation (`diff` reported no differences). Since neither the ingest
+      process nor the first `show` process was still running when this third invocation executed
+      (the CLI is not a long-running server — each `uv run singlish-transcriber ...` call is
+      already a fresh, independent process, confirmed by each invocation loading its own model
+      checkpoints/warnings from scratch), this demonstrates the data survived on disk across
+      independent process lifetimes, not in-memory state. Evidence:
+      `verification-evidence/M3-show-meeting1-restart-stdout.txt` (identical to
+      `M3-show-meeting1-stdout.txt`).
+
+- [x] **Ingest the same file a second time and confirm the tool behaves sensibly (either a
+      distinct new meeting row, or an explicit, intentional dedupe/overwrite) rather than crashing
+      or silently corrupting existing rows.**
+      ✓ — Ran `ingest samples/mixed_language_31-34.m4a --db <same isolated path>` a second time:
+      exited 0 in 86s, printed a new, distinct meeting id (`2`), no exception. Direct `sqlite3`
+      queries after this second ingest confirmed: `meetings` now has 2 rows (id 1 and id 2, both
+      with the same filename, as expected for re-ingestion-as-new-run); `speakers` has 4 rows (2
+      per meeting, correctly scoped — a join check `turns join speakers where
+      turns.meeting_id != speakers.meeting_id` returned 0 rows, i.e. no cross-meeting
+      speaker/turn leakage); `turns` has 42 rows for meeting 1 and 42 for meeting 2. Critically,
+      meeting 1's data was **not** altered by the second ingest: `select count(*) from turns
+      where meeting_id=1` was still 42, and an md5 hash of meeting 1's concatenated turn text
+      (recomputed after the second ingest) was unchanged from what a `show 1` on the fresh DB had
+      produced. `show 2` on the new meeting id also retrieved cleanly (42 turns). This matches the
+      documented intentional design (each ingest is a new processing run, no dedupe) with no
+      crash and no corruption of the pre-existing row. Evidence:
+      `verification-evidence/M3-ingest2-stdout.txt`, `M3-ingest2-stderr.txt`,
+      `M3-second-ingest-db-inspection.txt`, `M3-speaker-integrity-check.txt`,
+      `M3-show-meeting2-stdout.txt`.
+
+## M3 Summary
+
+All 4 M3 checklist items pass (✓ 4/4). The SQLite schema (`meetings`/`speakers`/`turns`) was
+populated with sensible, correctly-scoped values on ingest; `show` reconstructed the exact
+ingested transcript for every one of 42 turns (verified by direct diff against raw `sqlite3`
+query output, not by trusting the tool's own round-trip); persistence survived across
+independent process invocations (not just in-memory state within one Python process); and
+re-ingesting the same file produced a second, fully independent meeting row without crashing or
+corrupting the first meeting's rows.
+
+No CUDA OOM observed during either of the two ingest runs (each runs the full M2 diarize+ASR
+pipeline). GPU headroom concerns already flagged in the M1/M2 sections above (peak VRAM in the
+~96% range during the combined diarize+ASR pipeline) apply equally here since `ingest` runs the
+same pipeline — worth keeping in mind, not a new M3-specific finding.
+
+One minor, non-blocking observation for the implementer: `singlish-transcriber show` unconditionally
+imports the `diarize` module at CLI startup (`cli.py` does `from singlish_transcriber import
+diarize as diarize_mod` at module level), which pulls in `pyannote.audio` and triggers its
+`torchcodec is not installed correctly` warning to stderr even for `show`, a command that only
+reads SQLite and never touches pyannote. This is the same warning already flagged as non-blocking
+in the M1/M2 report sections (it doesn't affect exit codes or stdout), just now observed on a
+command that has no functional reason to load that dependency at all — a couple of seconds of
+avoidable import overhead per `show`/`ingest` invocation, not a correctness bug.
+
+M4 was explicitly out of scope for this run and is unimplemented — not evaluated here.
