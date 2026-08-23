@@ -1,6 +1,17 @@
 """pyannote.audio speaker diarization wrapper."""
 
 import os
+import warnings
+
+# Known-harmless warnings from pyannote/torchcodec, silenced so real problems aren't lost in
+# the noise. See README.md/commit history for why each one doesn't affect us:
+# - torchcodec fails to load an unrelated CUDA-13 native library (torchcodec packaging bug);
+#   we never hit that code path since we pass pyannote a pre-loaded waveform, not a file path.
+# - TF32 is intentionally disabled by pyannote for reproducibility - expected, not an error.
+# - the pooling std() warning fires on very short (sub-frame) diarized segments; harmless.
+warnings.filterwarnings("ignore", message=r"(?s).*torchcodec is not installed correctly.*")
+warnings.filterwarnings("ignore", message=r"(?s).*TensorFloat-32 \(TF32\) has been disabled.*")
+warnings.filterwarnings("ignore", message=r"(?s).*std\(\): degrees of freedom is <= 0.*")
 
 import soundfile as sf
 import torch
