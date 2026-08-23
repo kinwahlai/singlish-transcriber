@@ -42,13 +42,28 @@ def cmd_diarize(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_ingest(args: argparse.Namespace) -> int:
-    from singlish_transcriber import diarize as diarize_mod
+def _ingest(audio_path: str, db_path: str) -> int:
+    """Diarize + transcribe + store one file. Returns the new meeting id.
+
+    Lets FileNotFoundError / AudioConversionError / MissingHFTokenError propagate so
+    callers can report them consistently.
+    """
     from singlish_transcriber import pipeline
 
+    turns = pipeline.transcribe_with_speakers(audio_path)
+    duration = audio.get_duration_seconds(audio_path)
+    conn = storage.get_connection(db_path)
     try:
-        turns = pipeline.transcribe_with_speakers(args.audio_path)
-        duration = audio.get_duration_seconds(args.audio_path)
+        return storage.ingest_meeting(conn, audio_path, duration, turns)
+    finally:
+        conn.close()
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    from singlish_transcriber import diarize as diarize_mod
+
+    try:
+        meeting_id = _ingest(args.audio_path, args.db)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -56,13 +71,53 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
+    print(meeting_id)
+    return 0
+
+
+def cmd_label(args: argparse.Namespace) -> int:
+    from singlish_transcriber import diarize as diarize_mod
+    from singlish_transcriber import server
+
+    print(f"Ingesting {args.audio_path} (roughly a minute per few minutes of audio)...")
+    try:
+        meeting_id = _ingest(args.audio_path, args.db)
+    except FileNotFoundError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except (audio.AudioConversionError, diarize_mod.MissingHFTokenError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    print(f"Stored as meeting {meeting_id}.")
+
+    try:
+        server.ensure_server_running(args.host, args.port, args.db)
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    url = f"http://{args.host}:{args.port}/meetings/{meeting_id}"
+    print(f"Opening {url}")
+    server.open_url(url)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
     conn = storage.get_connection(args.db)
     try:
-        meeting_id = storage.ingest_meeting(conn, args.audio_path, duration, turns)
+        meetings = storage.list_meetings(conn)
     finally:
         conn.close()
 
-    print(meeting_id)
+    if not meetings:
+        print("No meetings ingested yet. Run `ingest` or `label` on a recording first.")
+        return 0
+
+    print(f"{'id':<4} {'duration':>9}  {'created_at':<26} filename")
+    for m in meetings:
+        print(
+            f"{m['id']:<4} {m['duration_seconds']:>8.0f}s  {m['created_at']:<26} {m['filename']}"
+        )
     return 0
 
 
@@ -106,6 +161,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--db", default=storage.DEFAULT_DB_PATH, help="Path to the SQLite database file."
     )
     ingest_parser.set_defaults(func=cmd_ingest)
+
+    label_parser = subparsers.add_parser(
+        "label",
+        help="Ingest a recording, start the web server if needed, and open it in your "
+        "browser for speaker labeling.",
+    )
+    label_parser.add_argument("audio_path", help="Path to an audio file (m4a/mp3/wav/...).")
+    label_parser.add_argument(
+        "--db", default=storage.DEFAULT_DB_PATH, help="Path to the SQLite database file."
+    )
+    label_parser.add_argument("--host", default="127.0.0.1", help="Web server host.")
+    label_parser.add_argument("--port", type=int, default=8420, help="Web server port.")
+    label_parser.set_defaults(func=cmd_label)
+
+    list_parser = subparsers.add_parser(
+        "list", help="List stored meetings with their ids."
+    )
+    list_parser.add_argument(
+        "--db", default=storage.DEFAULT_DB_PATH, help="Path to the SQLite database file."
+    )
+    list_parser.set_defaults(func=cmd_list)
 
     show_parser = subparsers.add_parser(
         "show", help="Print a stored meeting's transcript as JSON."

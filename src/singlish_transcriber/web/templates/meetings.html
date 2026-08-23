@@ -9,6 +9,7 @@
     ul { list-style: none; padding: 0; }
     li { padding: 0.75rem 0; border-bottom: 1px solid #ddd; }
     a { text-decoration: none; color: #2563eb; }
+    .meeting-id { color: #999; font-family: monospace; margin-right: 0.5rem; }
     .meta { color: #666; font-size: 0.85rem; }
     .empty { color: #666; }
   </style>
@@ -19,6 +20,7 @@
   <ul>
     {% for meeting in meetings %}
     <li>
+      <span class="meeting-id">#{{ meeting.id }}</span>
       <a href="/meetings/{{ meeting.id }}">{{ meeting.filename }}</a>
       <div class="meta">
         duration: {{ "%.0f"|format(meeting.duration_seconds) }}s &middot; ingested {{ meeting.created_at }}
