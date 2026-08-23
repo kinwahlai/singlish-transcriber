@@ -36,9 +36,10 @@ hanging silently. Renaming a speaker in the browser applies to every turn for th
 that meeting, and is saved immediately.
 
 **Important:** `label`/`ingest` always re-run the full pipeline and create a brand-new meeting,
-even for a file you've already processed before — they never check "have I seen this file
-already" and skip ahead. If you just want to reopen something you already ingested, use
-`make open ID=<id>` instead (see below) rather than running `label` again.
+even for a file you've already processed before — they never silently skip ahead. If a file's
+already been ingested, they'll warn you and ask before proceeding (add `--yes` / `make ... YES=1`
+to skip the prompt). If you just want to reopen something you already ingested, use
+`make open ID=<id>` instead (see below) rather than re-ingesting.
 
 Run `label` again on another recording later and it reuses the same background server rather than
 starting a new one.

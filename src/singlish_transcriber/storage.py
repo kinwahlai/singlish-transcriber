@@ -1,5 +1,6 @@
 """SQLite persistence for meetings, speakers, and transcript turns."""
 
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -128,6 +129,16 @@ def list_meetings(conn: sqlite3.Connection) -> list[dict]:
         "SELECT id, filename, duration_seconds, created_at FROM meetings ORDER BY created_at"
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def find_meetings_by_filename(conn: sqlite3.Connection, filename: str) -> list[dict]:
+    """Find previously ingested meetings whose stored filename resolves to the same path,
+    regardless of how the path was spelled (relative vs absolute) at ingest time."""
+    target = os.path.abspath(filename)
+    rows = conn.execute(
+        "SELECT id, filename, created_at FROM meetings ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(row) for row in rows if os.path.abspath(row["filename"]) == target]
 
 
 def rename_speaker(

@@ -59,8 +59,47 @@ def _ingest(audio_path: str, db_path: str) -> int:
         conn.close()
 
 
+def _confirm_if_already_ingested(audio_path: str, db_path: str, force: bool) -> bool:
+    """Warn and ask before re-running the full pipeline on a file that's already been ingested.
+
+    Returns True if it's fine to proceed, False if the user (or a non-interactive caller with
+    no --yes) declined.
+    """
+    if force:
+        return True
+
+    conn = storage.get_connection(db_path)
+    try:
+        existing = storage.find_meetings_by_filename(conn, audio_path)
+    finally:
+        conn.close()
+    if not existing:
+        return True
+
+    print(f"'{audio_path}' has already been ingested:", file=sys.stderr)
+    for m in existing:
+        print(f"  meeting {m['id']} (ingested {m['created_at']})", file=sys.stderr)
+    print(
+        "Re-ingesting re-runs the full pipeline (can take many minutes for a long "
+        "recording) and creates a separate new meeting - it does not update the existing "
+        "one. Use `open <id>` instead if you just want to view/label it again.",
+        file=sys.stderr,
+    )
+    try:
+        answer = input("Continue and create a new meeting anyway? [y/N]: ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in ("y", "yes"):
+        print("Aborted.", file=sys.stderr)
+        return False
+    return True
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     from singlish_transcriber import diarize as diarize_mod
+
+    if not _confirm_if_already_ingested(args.audio_path, args.db, args.yes):
+        return 1
 
     try:
         meeting_id = _ingest(args.audio_path, args.db)
@@ -92,6 +131,9 @@ def _serve_and_open(host: str, port: str | int, db_path: str, meeting_id: int) -
 
 def cmd_label(args: argparse.Namespace) -> int:
     from singlish_transcriber import diarize as diarize_mod
+
+    if not _confirm_if_already_ingested(args.audio_path, args.db, args.yes):
+        return 1
 
     print(f"Ingesting {args.audio_path} (roughly a minute per few minutes of audio)...")
     try:
@@ -178,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument(
         "--db", default=storage.DEFAULT_DB_PATH, help="Path to the SQLite database file."
     )
+    ingest_parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the confirmation prompt if this file was already ingested.",
+    )
     ingest_parser.set_defaults(func=cmd_ingest)
 
     label_parser = subparsers.add_parser(
@@ -191,6 +237,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     label_parser.add_argument("--host", default="127.0.0.1", help="Web server host.")
     label_parser.add_argument("--port", type=int, default=8420, help="Web server port.")
+    label_parser.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip the confirmation prompt if this file was already ingested.",
+    )
     label_parser.set_defaults(func=cmd_label)
 
     open_parser = subparsers.add_parser(

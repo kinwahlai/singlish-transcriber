@@ -6,6 +6,7 @@ help:
 	@echo "singlish-transcriber:"
 	@echo ""
 	@echo "  make label FILE=path/to/recording.m4a   Transcribe + label a NEW meeting (re-runs the full pipeline)"
+	@echo "                                           (warns + asks first if that file was already ingested; add YES=1 to skip)"
 	@echo "  make open ID=1                          Reopen an ALREADY-ingested meeting in your browser (no re-processing)"
 	@echo "  make ingest FILE=path                   Same as label, but doesn't open the browser"
 	@echo "  make list                               List stored meetings and their ids"
@@ -21,7 +22,7 @@ label:
 ifndef FILE
 	$(error Usage: make label FILE=path/to/recording.m4a)
 endif
-	uv run singlish-transcriber label $(FILE)
+	uv run singlish-transcriber label $(FILE) $(if $(YES),--yes)
 
 open:
 ifndef ID
@@ -33,7 +34,7 @@ ingest:
 ifndef FILE
 	$(error Usage: make ingest FILE=path/to/recording.m4a)
 endif
-	uv run singlish-transcriber ingest $(FILE)
+	uv run singlish-transcriber ingest $(FILE) $(if $(YES),--yes)
 
 list:
 	uv run singlish-transcriber list
