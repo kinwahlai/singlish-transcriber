@@ -22,30 +22,49 @@ Plain `transcribe` (no diarization) doesn't need any of this — MERaLiON-3-3B-A
 ## Quick start: transcribe and label a meeting
 
 ```
-uv run singlish-transcriber label path/to/recording.m4a
+make label FILE=path/to/recording.m4a
 ```
 
-This does everything in one go: diarizes + transcribes the recording, stores it, starts the web
-server in the background if it isn't already running, and opens your browser straight to that
-meeting's page so you can rename "Speaker 1" / "Speaker 2" to real names. Takes roughly a minute
-of processing per few minutes of audio. Renaming a speaker in the browser applies to every turn
-for that speaker in that meeting, and is saved immediately.
+(or `uv run singlish-transcriber label path/to/recording.m4a` if you'd rather not use `make`.)
+
+This does everything in one go: diarizes + transcribes the recording, stores it as a **new**
+meeting, starts the web server in the background if it isn't already running, and opens your
+browser straight to that meeting's page so you can rename "Speaker 1" / "Speaker 2" to real
+names. Takes roughly a minute of processing per few minutes of audio — for anything more than a
+few minutes long, expect it to take a while, and it prints progress as it works rather than
+hanging silently. Renaming a speaker in the browser applies to every turn for that speaker in
+that meeting, and is saved immediately.
+
+**Important:** `label`/`ingest` always re-run the full pipeline and create a brand-new meeting,
+even for a file you've already processed before — they never check "have I seen this file
+already" and skip ahead. If you just want to reopen something you already ingested, use
+`make open ID=<id>` instead (see below) rather than running `label` again.
 
 Run `label` again on another recording later and it reuses the same background server rather than
 starting a new one.
 
 ## Command reference
 
-Every command accepts `m4a`, `mp3`, `wav`, or anything else `ffmpeg` can read.
+Every command accepts `m4a`, `mp3`, `wav`, or anything else `ffmpeg` can read. Each has a
+matching `make <name> FILE=... / ID=...` shortcut — run `make` with no arguments to see them all.
 
 ### `label <audio_path> [--db PATH] [--host HOST] [--port PORT]`
-The everyday command — see Quick Start above. Combines `ingest` + starting the web server +
-opening your browser to the new meeting.
+The everyday command for a **new** recording — see Quick Start above. Combines `ingest` +
+starting the web server + opening your browser to the newly created meeting.
+
+### `open <meeting_id> [--db PATH] [--host HOST] [--port PORT]`
+Reopens an **already-ingested** meeting in your browser — starts the server if needed, but does
+no re-processing. Use this instead of `label` once a recording has already been ingested; look up
+its id with `list` first if you don't remember it.
 
 ### `ingest <audio_path> [--db PATH]`
-Diarizes, transcribes, and stores a recording, printing the new integer meeting id. Use this
-instead of `label` if you don't want the browser opened automatically (e.g. ingesting several
-recordings back-to-back before reviewing any of them).
+Same as `label`, minus opening the browser — diarizes, transcribes, and stores a recording,
+printing the new integer meeting id. Handy for batch-ingesting several recordings before
+reviewing any of them (follow up with `open <id>` on each once you're ready).
+
+### `list [--db PATH]`
+Lists every stored meeting with its id, duration, and filename — this is how you find the id to
+pass to `show` or `open`.
 
 ### `show <meeting_id> [--db PATH]`
 Prints a previously stored meeting's transcript as JSON (speaker labels/names, timestamps, text).
