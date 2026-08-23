@@ -37,23 +37,28 @@ def transcribe_with_speakers(input_path: str) -> list[dict]:
     """
     wav_path = audio.to_wav16k_mono(input_path)
     try:
+        print("Diarizing (can take a few minutes for a long recording)...", file=sys.stderr)
         turns = _merge_adjacent(diarize_mod.diarize(wav_path))
         samples, sample_rate = sf.read(wav_path, dtype="float32", always_2d=False)
 
+        print(f"Found {len(turns)} speaker turns. Transcribing...", file=sys.stderr)
         texts = []
-        for start, end, _speaker in turns:
+        progress_step = max(1, len(turns) // 20)  # ~20 updates regardless of turn count
+        for idx, (start, end, _speaker) in enumerate(turns):
             i, j = int(start * sample_rate), int(end * sample_rate)
             if j <= i:
                 texts.append("")
-                continue
-            try:
-                texts.append(asr.transcribe_array(samples[i:j], sample_rate))
-            except Exception as e:  # noqa: BLE001 - one bad segment must not kill the run
-                print(
-                    f"warning: ASR failed for segment {start:.2f}-{end:.2f}s: {e}",
-                    file=sys.stderr,
-                )
-                texts.append("")
+            else:
+                try:
+                    texts.append(asr.transcribe_array(samples[i:j], sample_rate))
+                except Exception as e:  # noqa: BLE001 - one bad segment must not kill the run
+                    print(
+                        f"warning: ASR failed for segment {start:.2f}-{end:.2f}s: {e}",
+                        file=sys.stderr,
+                    )
+                    texts.append("")
+            if (idx + 1) % progress_step == 0 or idx + 1 == len(turns):
+                print(f"  transcribed {idx + 1}/{len(turns)} turns", file=sys.stderr)
     finally:
         Path(wav_path).unlink(missing_ok=True)
 
