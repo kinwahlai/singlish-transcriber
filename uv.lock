@@ -4657,9 +4657,12 @@ name = "singlish-transcriber"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "fastapi" },
+    { name = "jinja2" },
     { name = "meralion-3-asr" },
     { name = "pyannote-audio" },
     { name = "torch" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -4670,9 +4673,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastapi", specifier = ">=0.141.1" },
+    { name = "jinja2", specifier = ">=3.1.6" },
     { name = "meralion-3-asr", specifier = ">=0.1.0" },
     { name = "pyannote-audio", specifier = ">=4.0.7" },
     { name = "torch", specifier = ">=2.9.1" },
+    { name = "uvicorn", specifier = ">=0.52.4" },
 ]
 
 [package.metadata.requires-dev]

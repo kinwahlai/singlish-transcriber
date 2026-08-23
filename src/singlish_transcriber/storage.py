@@ -128,3 +128,15 @@ def list_meetings(conn: sqlite3.Connection) -> list[dict]:
         "SELECT id, filename, duration_seconds, created_at FROM meetings ORDER BY created_at"
     ).fetchall()
     return [dict(row) for row in rows]
+
+
+def rename_speaker(
+    conn: sqlite3.Connection, meeting_id: int, label: str, display_name: str
+) -> bool:
+    """Set a speaker's display name for one meeting. Returns False if no such speaker exists."""
+    cur = conn.execute(
+        "UPDATE speakers SET display_name = ? WHERE meeting_id = ? AND label = ?",
+        (display_name, meeting_id, label),
+    )
+    conn.commit()
+    return cur.rowcount > 0

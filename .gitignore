@@ -20,3 +20,6 @@ samples/
 *.sqlite
 *.db
 verification-evidence/
+
+# Playwright MCP tool cache (browser session artifacts, not project output)
+.playwright-mcp/

@@ -292,3 +292,118 @@ command that has no functional reason to load that dependency at all — a coupl
 avoidable import overhead per `show`/`ingest` invocation, not a correctness bug.
 
 M4 was explicitly out of scope for this run and is unimplemented — not evaluated here.
+
+# M4 section (this run)
+
+Scope of this run: **M4 only** ("Speaker-labeling web UI"), per verification request. M1/M2/M3
+sections above are preserved unchanged from prior verification sessions.
+
+Environment check: `uv sync` ran clean (236 packages resolved, 229 checked, no errors).
+`samples/mixed_language_31-34.m4a` confirmed present. GPU idle baseline before testing: 0 MiB /
+8188 MiB used.
+
+Setup: used a fresh, isolated DB at
+`/tmp/claude-1000/.../scratchpad/m4_verify.sqlite` (not the developer's default DB). Ran
+`uv run singlish-transcriber ingest samples/mixed_language_31-34.m4a --db <isolated path>`, which
+exited 0 in ~71s and printed meeting id `1`. Direct `sqlite3` query confirmed 1 row in `meetings`,
+2 rows in `speakers` (`SPEAKER_00`, `SPEAKER_01`, both with `display_name` initially NULL), and 42
+rows in `turns` — this is the same pipeline already verified in M2/M3, re-run here only to give
+the web app something real to serve. Started the app with
+`SINGLISH_TRANSCRIBER_DB=<isolated path> uv run uvicorn singlish_transcriber.web.app:app --port
+8971` in the background; confirmed it was listening (`curl -o /dev/null -w '%{http_code}'` on `/`
+returned `200`) before driving it with Playwright. Playwright's bundled Chrome was not installed
+in this environment and had to be installed via `npx playwright install chrome` before any
+browser automation could run — noting this since a from-scratch environment would need that step
+too. Server was killed via `kill` on its PID at the end of the run and confirmed no longer
+listening on port 8971 (`ss -tlnp` showed nothing bound to that port afterward).
+
+## M4 — Speaker-labeling web UI
+
+- [x] **Start the FastAPI app and confirm the meetings list page loads and shows at least one
+      previously ingested meeting.**
+      ✓ — Navigated to `http://127.0.0.1:8971/`. Page title was "Meetings — singlish-transcriber"
+      and the accessibility snapshot showed a list with one item:
+      `samples/mixed_language_31-34.m4a` linking to `/meetings/1`, with metadata text
+      "duration: 180s · ingested 2026-08-23T03:00:35...". Only console message was an unrelated
+      `favicon.ico` 404, not a functional error. Evidence:
+      `verification-evidence/M4-meetings-list.png`.
+
+- [x] **Open that meeting and confirm the page shows an audio player and the transcript text,
+      turn by turn.**
+      ✓ — Clicked the meeting link, landed on `/meetings/1`. `page.evaluate` confirmed
+      `document.getElementById('player')` exists, is an `<audio>` element, has `controls=true`,
+      and `src="http://127.0.0.1:8971/meetings/1/audio"`. The accessibility snapshot showed 47
+      turn rows in chronological order, each with a timestamp (e.g. "0.5s"), a speaker label
+      ("SPEAKER_01"/"SPEAKER_00"), and transcribed text (mixed English/Mandarin, matching what
+      M2/M3 already validated for this clip). Evidence:
+      `verification-evidence/M4-meeting-detail-initial.png`.
+
+- [x] **Click a speaker's placeholder label, rename it, save, and confirm every turn belonging to
+      that speaker in the transcript now shows the new name — not just the one turn that was
+      clicked.**
+      ✓ — Clicked the `SPEAKER_01` label on the turn at 0.5s. It turned into an editable
+      `<input>` in place (confirmed via snapshot: `textbox [active]` replaced the label span, no
+      native browser prompt/dialog was involved). Typed "Alice Tan" and pressed Enter. Network
+      log confirmed `PATCH /api/meetings/1/speakers/SPEAKER_01` returned `200 OK`. Immediately
+      after, `page.evaluate` querying all 31 elements with `data-label="SPEAKER_01"` across the
+      whole transcript showed every one of them now read "Alice Tan" (`allSame: true`), while all
+      11 `SPEAKER_00`-labeled turns remained unchanged (still "SPEAKER_00"), confirming the
+      update was scoped correctly to the renamed speaker only, not a single row and not
+      cross-contaminating the other speaker. Evidence:
+      `verification-evidence/M4-speaker-edit-mode.png` (mid-edit state),
+      `verification-evidence/M4-speaker-renamed-before-reload.png` (post-save state, all rows
+      updated).
+
+- [x] **Reload the page (a real browser reload, not a client-side re-render) and confirm the
+      renamed speaker label is still shown — i.e. it round-tripped through SQLite, not just
+      in-memory/JS state.**
+      ✓ — Before touching the browser again, queried the SQLite file directly with the `sqlite3`
+      CLI: `select id, meeting_id, label, display_name from speakers;` returned
+      `1|1|SPEAKER_01|Alice Tan` and `2|1|SPEAKER_00|` (empty) — proving the rename was persisted
+      to disk, not just held in the FastAPI process's memory or the page's JS state. Then did a
+      full `page.goto('http://127.0.0.1:8971/meetings/1')` (a fresh navigation/full page load,
+      not `location.reload()` via SPA state, and this is a fully server-rendered Jinja2 template
+      with no client-side router to "fake" a re-render anyway). After the fresh load,
+      `page.evaluate` showed the unique text content for all `SPEAKER_01`-labeled elements was
+      `["Alice Tan"]` and for `SPEAKER_00` was `["SPEAKER_00"]` — the rename survived the reload
+      exactly as expected. Evidence: `verification-evidence/M4-speaker-renamed-after-reload.png`.
+
+- [x] **Click on a transcript turn and confirm the audio player seeks to approximately that
+      turn's `start_seconds`.**
+      ✓ — Confirmed `document.getElementById('player').currentTime` was `0` before the click.
+      Clicked on the `.turn-text` span (explicitly not the speaker-label span) of the turn whose
+      `data-start` attribute was `104.09909375000001`. Immediately after,
+      `page.evaluate(() => document.getElementById('player').currentTime)` returned
+      `104.099093` — matching the turn's start time to within floating-point display precision,
+      confirming the click-to-seek behavior works and is not gated on the speaker-label click
+      target. Evidence: `verification-evidence/M4-audio-seek.png`.
+
+Supplementary check (not a formal checklist item, but relevant to "audio player" being real and
+functional rather than just present in the DOM): sent a `curl` request with a `Range:
+bytes=1000-2000` header directly to `GET /meetings/1/audio` and got back `HTTP/1.1 206 Partial
+Content` with `content-range: bytes 1000-2000/4393689` and `accept-ranges: bytes` — the audio
+endpoint correctly supports Range requests as required for browser scrubbing/seeking, not just a
+naive full-file `200` response.
+
+## M4 Summary
+
+All 5 M4 checklist items pass (✓ 5/5). The FastAPI app served the meetings list and a
+per-meeting transcript+audio-player view correctly against a freshly-ingested real meeting;
+speaker renaming via the in-place editable label updated every occurrence of that speaker across
+the whole transcript (not just the clicked row) and left the other speaker's label untouched;
+the rename was verified round-tripped through SQLite by direct `sqlite3` query (not inferred from
+the UI alone) and survived a genuine full-page reload; and clicking a transcript turn correctly
+seeked the `<audio>` element's `currentTime` to that turn's start time. The `/meetings/{id}/audio`
+endpoint also correctly serves partial content for Range requests.
+
+One environment note for whoever runs this next: Playwright's Chrome browser was not
+pre-installed in this sandbox and had to be installed via `npx playwright install chrome` before
+Playwright automation could run at all — not a project defect, but worth knowing if a fresh
+environment is used for the next verification pass.
+
+No CUDA OOM observed during the single ingest run backing this verification (GPU idle baseline of
+0 MiB confirmed before starting; the ingest pipeline itself was already OOM-checked in the M1/M2
+sections above and behaves identically here since M4 doesn't run the ASR/diarization pipeline
+itself — it only reads pre-ingested data).
+
+M5 does not exist yet and was not touched.

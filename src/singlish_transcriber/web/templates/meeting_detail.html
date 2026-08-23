@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ meeting.filename }} — singlish-transcriber</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.2rem; word-break: break-all; }
+    a.back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }
+    audio { width: 100%; margin: 1rem 0; }
+    .turn { padding: 0.5rem 0; border-bottom: 1px solid #eee; cursor: pointer; }
+    .turn:hover { background: #f8f8f8; }
+    .turn-time { color: #999; font-size: 0.75rem; margin-right: 0.5rem; }
+    .speaker-label {
+      font-weight: 600; color: #1d4ed8; margin-right: 0.5rem; cursor: text;
+      border-bottom: 1px dashed transparent;
+    }
+    .speaker-label:hover { border-bottom-color: #1d4ed8; }
+    .speaker-label-input { font-weight: 600; font-size: 1em; width: 8em; }
+    .turn-text { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <a class="back" href="/">&larr; all meetings</a>
+  <h1>{{ meeting.filename }}</h1>
+
+  <audio id="player" controls src="/meetings/{{ meeting.id }}/audio"></audio>
+
+  <div id="transcript">
+    {% for turn in meeting.turns %}
+    <div class="turn" data-start="{{ turn.start }}">
+      <span class="turn-time">{{ "%.1f"|format(turn.start) }}s</span>
+      <span class="speaker-label" data-label="{{ turn.speaker_label }}">{{ turn.speaker_display_name or turn.speaker_label }}</span>
+      <span class="turn-text">{{ turn.text }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  <script>
+    const meetingId = {{ meeting.id }};
+    const player = document.getElementById('player');
+
+    document.querySelectorAll('.turn').forEach(turnEl => {
+      turnEl.addEventListener('click', (e) => {
+        if (e.target.classList.contains('speaker-label')) return;
+        player.currentTime = parseFloat(turnEl.dataset.start);
+      });
+    });
+
+    function startEdit(labelEl) {
+      const label = labelEl.dataset.label;
+      const current = labelEl.textContent;
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'speaker-label-input';
+      input.value = current;
+      labelEl.replaceWith(input);
+      input.focus();
+      input.select();
+
+      let committed = false;
+      function commit() {
+        if (committed) return;
+        committed = true;
+        const newName = input.value.trim();
+        input.replaceWith(labelEl);
+        if (!newName || newName === current) return;
+
+        fetch(`/api/meetings/${meetingId}/speakers/${encodeURIComponent(label)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ display_name: newName }),
+        }).then(res => {
+          if (!res.ok) return;
+          document.querySelectorAll(`.speaker-label[data-label="${CSS.escape(label)}"]`)
+            .forEach(el => { el.textContent = newName; });
+        });
+      }
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); committed = true; input.replaceWith(labelEl); }
+      });
+      input.addEventListener('blur', commit);
+      input.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    document.querySelectorAll('.speaker-label').forEach(labelEl => {
+      labelEl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        startEdit(labelEl);
+      });
+    });
+  </script>
+</body>
+</html>

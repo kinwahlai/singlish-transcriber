@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Meetings — singlish-transcriber</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.4rem; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 0.75rem 0; border-bottom: 1px solid #ddd; }
+    a { text-decoration: none; color: #2563eb; }
+    .meta { color: #666; font-size: 0.85rem; }
+    .empty { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>Meetings</h1>
+  {% if meetings %}
+  <ul>
+    {% for meeting in meetings %}
+    <li>
+      <a href="/meetings/{{ meeting.id }}">{{ meeting.filename }}</a>
+      <div class="meta">
+        duration: {{ "%.0f"|format(meeting.duration_seconds) }}s &middot; ingested {{ meeting.created_at }}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No meetings ingested yet. Run <code>singlish-transcriber ingest &lt;path&gt;</code> from the CLI first.</p>
+  {% endif %}
+</body>
+</html>
