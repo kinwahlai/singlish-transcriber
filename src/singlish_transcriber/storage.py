@@ -1,6 +1,6 @@
 """SQLite persistence for meetings, speakers, and transcript turns."""
 
-import os
+import hashlib
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,6 +11,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS meetings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     filename TEXT NOT NULL,
+    file_hash TEXT,
     recorded_at TEXT,
     duration_seconds REAL,
     created_at TEXT NOT NULL
@@ -40,25 +41,47 @@ def get_connection(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after the initial schema, for databases created by older
+    versions of this tool. Existing rows just get NULL for the new column."""
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(meetings)")}
+    if "file_hash" not in columns:
+        conn.execute("ALTER TABLE meetings ADD COLUMN file_hash TEXT")
+        conn.commit()
+
+
+def hash_file(path: str) -> str:
+    """SHA-256 of a file's contents - identifies a recording by what it actually contains,
+    not by filename/path, which can be renamed, moved, or (as observed in practice with this
+    project's own recorder app) reused for entirely different content."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def ingest_meeting(
     conn: sqlite3.Connection,
     filename: str,
+    file_hash: str,
     duration_seconds: float,
     turns: list[dict],
 ) -> int:
     """Store a meeting and its diarized/transcribed turns. Returns the new meeting id.
 
-    Each call creates a new meeting row, even for a filename ingested before - re-ingestion
+    Each call creates a new meeting row, even for content ingested before - re-ingestion
     is treated as an intentional new processing run, not a duplicate to reject or merge.
     """
     created_at = datetime.now(UTC).isoformat()
     cur = conn.execute(
-        "INSERT INTO meetings (filename, recorded_at, duration_seconds, created_at) "
-        "VALUES (?, NULL, ?, ?)",
-        (filename, duration_seconds, created_at),
+        "INSERT INTO meetings (filename, file_hash, recorded_at, duration_seconds, created_at) "
+        "VALUES (?, ?, NULL, ?, ?)",
+        (filename, file_hash, duration_seconds, created_at),
     )
     meeting_id = cur.lastrowid
 
@@ -131,14 +154,14 @@ def list_meetings(conn: sqlite3.Connection) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def find_meetings_by_filename(conn: sqlite3.Connection, filename: str) -> list[dict]:
-    """Find previously ingested meetings whose stored filename resolves to the same path,
-    regardless of how the path was spelled (relative vs absolute) at ingest time."""
-    target = os.path.abspath(filename)
+def find_meetings_by_hash(conn: sqlite3.Connection, file_hash: str) -> list[dict]:
+    """Find previously ingested meetings with the same file content, regardless of what path
+    or filename they were ingested under."""
     rows = conn.execute(
-        "SELECT id, filename, created_at FROM meetings ORDER BY created_at DESC"
+        "SELECT id, filename, created_at FROM meetings WHERE file_hash = ? ORDER BY created_at DESC",
+        (file_hash,),
     ).fetchall()
-    return [dict(row) for row in rows if os.path.abspath(row["filename"]) == target]
+    return [dict(row) for row in rows]
 
 
 def rename_speaker(

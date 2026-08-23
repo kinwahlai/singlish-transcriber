@@ -42,7 +42,7 @@ def cmd_diarize(args: argparse.Namespace) -> int:
     return 0
 
 
-def _ingest(audio_path: str, db_path: str) -> int:
+def _ingest(audio_path: str, file_hash: str, db_path: str) -> int:
     """Diarize + transcribe + store one file. Returns the new meeting id.
 
     Lets FileNotFoundError / AudioConversionError / MissingHFTokenError propagate so
@@ -54,13 +54,17 @@ def _ingest(audio_path: str, db_path: str) -> int:
     duration = audio.get_duration_seconds(audio_path)
     conn = storage.get_connection(db_path)
     try:
-        return storage.ingest_meeting(conn, audio_path, duration, turns)
+        return storage.ingest_meeting(conn, audio_path, file_hash, duration, turns)
     finally:
         conn.close()
 
 
-def _confirm_if_already_ingested(audio_path: str, db_path: str, force: bool) -> bool:
-    """Warn and ask before re-running the full pipeline on a file that's already been ingested.
+def _confirm_if_already_ingested(
+    file_hash: str, audio_path: str, db_path: str, force: bool
+) -> bool:
+    """Warn and ask before re-running the full pipeline on content that's already been
+    ingested (matched by file content, not path - the same recording can be under a
+    different filename, and the same filename can hold different content next time).
 
     Returns True if it's fine to proceed, False if the user (or a non-interactive caller with
     no --yes) declined.
@@ -70,15 +74,15 @@ def _confirm_if_already_ingested(audio_path: str, db_path: str, force: bool) -> 
 
     conn = storage.get_connection(db_path)
     try:
-        existing = storage.find_meetings_by_filename(conn, audio_path)
+        existing = storage.find_meetings_by_hash(conn, file_hash)
     finally:
         conn.close()
     if not existing:
         return True
 
-    print(f"'{audio_path}' has already been ingested:", file=sys.stderr)
+    print("This exact audio content has already been ingested:", file=sys.stderr)
     for m in existing:
-        print(f"  meeting {m['id']} (ingested {m['created_at']})", file=sys.stderr)
+        print(f"  meeting {m['id']}: {m['filename']} (ingested {m['created_at']})", file=sys.stderr)
     print(
         "Re-ingesting re-runs the full pipeline (can take many minutes for a long "
         "recording) and creates a separate new meeting - it does not update the existing "
@@ -98,11 +102,13 @@ def _confirm_if_already_ingested(audio_path: str, db_path: str, force: bool) -> 
 def cmd_ingest(args: argparse.Namespace) -> int:
     from singlish_transcriber import diarize as diarize_mod
 
-    if not _confirm_if_already_ingested(args.audio_path, args.db, args.yes):
-        return 1
-
     try:
-        meeting_id = _ingest(args.audio_path, args.db)
+        if not Path(args.audio_path).is_file():
+            raise FileNotFoundError(f"audio file not found: {args.audio_path}")
+        file_hash = storage.hash_file(args.audio_path)
+        if not _confirm_if_already_ingested(file_hash, args.audio_path, args.db, args.yes):
+            return 1
+        meeting_id = _ingest(args.audio_path, file_hash, args.db)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
@@ -132,12 +138,14 @@ def _serve_and_open(host: str, port: str | int, db_path: str, meeting_id: int) -
 def cmd_label(args: argparse.Namespace) -> int:
     from singlish_transcriber import diarize as diarize_mod
 
-    if not _confirm_if_already_ingested(args.audio_path, args.db, args.yes):
-        return 1
-
-    print(f"Ingesting {args.audio_path} (roughly a minute per few minutes of audio)...")
     try:
-        meeting_id = _ingest(args.audio_path, args.db)
+        if not Path(args.audio_path).is_file():
+            raise FileNotFoundError(f"audio file not found: {args.audio_path}")
+        file_hash = storage.hash_file(args.audio_path)
+        if not _confirm_if_already_ingested(file_hash, args.audio_path, args.db, args.yes):
+            return 1
+        print(f"Ingesting {args.audio_path} (roughly a minute per few minutes of audio)...")
+        meeting_id = _ingest(args.audio_path, file_hash, args.db)
     except FileNotFoundError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

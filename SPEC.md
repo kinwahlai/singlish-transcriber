@@ -60,6 +60,8 @@ Refined during M3 implementation; initial shape:
 meetings (
   id INTEGER PRIMARY KEY,
   filename TEXT NOT NULL,
+  file_hash TEXT,        -- SHA-256 of the audio content, used to detect re-ingesting the
+                          -- same recording under a different path/filename (added post-M3)
   recorded_at TEXT,
   duration_seconds REAL,
   created_at TEXT NOT NULL
