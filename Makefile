@@ -1,11 +1,12 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help label ingest list show diarize transcribe lint test sync
+.PHONY: help label open ingest list show diarize transcribe lint test sync
 
 help:
 	@echo "singlish-transcriber:"
 	@echo ""
-	@echo "  make label FILE=path/to/recording.m4a   Transcribe + label a meeting (the one you'll use daily)"
+	@echo "  make label FILE=path/to/recording.m4a   Transcribe + label a NEW meeting (re-runs the full pipeline)"
+	@echo "  make open ID=1                          Reopen an ALREADY-ingested meeting in your browser (no re-processing)"
 	@echo "  make ingest FILE=path                   Same as label, but doesn't open the browser"
 	@echo "  make list                               List stored meetings and their ids"
 	@echo "  make show ID=1                          Print a stored meeting's transcript"
@@ -21,6 +22,12 @@ ifndef FILE
 	$(error Usage: make label FILE=path/to/recording.m4a)
 endif
 	uv run singlish-transcriber label $(FILE)
+
+open:
+ifndef ID
+	$(error Usage: make open ID=1)
+endif
+	uv run singlish-transcriber open $(ID)
 
 ingest:
 ifndef FILE

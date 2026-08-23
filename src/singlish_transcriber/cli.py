@@ -75,9 +75,23 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _serve_and_open(host: str, port: str | int, db_path: str, meeting_id: int) -> int:
+    from singlish_transcriber import server
+
+    try:
+        server.ensure_server_running(host, port, db_path)
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+    url = f"http://{host}:{port}/meetings/{meeting_id}"
+    print(f"Opening {url}")
+    server.open_url(url)
+    return 0
+
+
 def cmd_label(args: argparse.Namespace) -> int:
     from singlish_transcriber import diarize as diarize_mod
-    from singlish_transcriber import server
 
     print(f"Ingesting {args.audio_path} (roughly a minute per few minutes of audio)...")
     try:
@@ -90,16 +104,20 @@ def cmd_label(args: argparse.Namespace) -> int:
         return 1
     print(f"Stored as meeting {meeting_id}.")
 
+    return _serve_and_open(args.host, args.port, args.db, meeting_id)
+
+
+def cmd_open(args: argparse.Namespace) -> int:
+    conn = storage.get_connection(args.db)
     try:
-        server.ensure_server_running(args.host, args.port, args.db)
-    except RuntimeError as e:
+        storage.get_meeting_transcript(conn, args.meeting_id)  # raises KeyError if missing
+    except KeyError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
+    finally:
+        conn.close()
 
-    url = f"http://{args.host}:{args.port}/meetings/{meeting_id}"
-    print(f"Opening {url}")
-    server.open_url(url)
-    return 0
+    return _serve_and_open(args.host, args.port, args.db, args.meeting_id)
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -174,6 +192,18 @@ def build_parser() -> argparse.ArgumentParser:
     label_parser.add_argument("--host", default="127.0.0.1", help="Web server host.")
     label_parser.add_argument("--port", type=int, default=8420, help="Web server port.")
     label_parser.set_defaults(func=cmd_label)
+
+    open_parser = subparsers.add_parser(
+        "open",
+        help="Open an already-ingested meeting in your browser (no re-processing).",
+    )
+    open_parser.add_argument("meeting_id", type=int)
+    open_parser.add_argument(
+        "--db", default=storage.DEFAULT_DB_PATH, help="Path to the SQLite database file."
+    )
+    open_parser.add_argument("--host", default="127.0.0.1", help="Web server host.")
+    open_parser.add_argument("--port", type=int, default=8420, help="Web server port.")
+    open_parser.set_defaults(func=cmd_open)
 
     list_parser = subparsers.add_parser(
         "list", help="List stored meetings with their ids."
