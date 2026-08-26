@@ -68,6 +68,16 @@ English/Mandarin/Singlish excerpt correctly, peaked at ~8.15GB VRAM regardless o
       speaker into multiple IDs).
 - [ ] Confirm the pipeline handles a diarized segment shorter than ~0.5s (a brief interjection)
       without crashing.
+- [ ] (added post-implementation — real recordings showed pyannote's segmentation model can
+      confidently misclassify multi-second stretches of real speech as silence, dropping whole
+      sentences with no diarized turn at all) Confirm undiarized gaps of >=`MIN_GAP_SECONDS` are
+      ASR'd as a backstop and, if they contain real speech, appear in the output as a turn;
+      confirm gaps that are genuine silence/noise are NOT added (no spurious turns from
+      background noise); confirm a recovered gap bordered by the *same* diarized speaker on both
+      sides is attributed to that speaker (not `SPEAKER_UNKNOWN`) — this is what keeps the
+      single-speaker-clip item above passing even when the backstop recovers a short
+      interjection — and confirm a gap bordered by two *different* speakers (or at the very
+      start/end of the recording) falls back to `speaker_id == "SPEAKER_UNKNOWN"`.
 
 ## M3 — Persistence
 

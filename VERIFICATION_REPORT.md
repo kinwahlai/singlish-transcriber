@@ -74,118 +74,160 @@ GPU headroom during a real 3-minute clip was only ~4% of total VRAM.
 
 ---
 
-# M2 section (this run)
+# M2 section (this run — re-verification #2, gap-attribution fix)
+
+Scope of this run: **M2 only** ("Diarization + merged transcript"), full re-run of all 7 rubric
+items end-to-end (attempt 2 of up to 3 for this milestone's checkpoint), specifically to check the
+fix applied to `_find_gaps`/`_transcribe_gaps` in `src/singlish_transcriber/pipeline.py` after the
+previous verification pass found the single-speaker-clip item failing due to the gap backstop
+always attributing recovered gaps to `SPEAKER_UNKNOWN`. The fix: `_find_gaps` now also returns the
+diarized speaker bordering each gap on both sides; `_transcribe_gaps` attributes a recovered gap
+to that speaker when it's the same on both sides, and falls back to `SPEAKER_UNKNOWN` only when
+the gap is bordered by two different speakers or sits at the very start/end of the recording (no
+speaker on one side). `VERIFICATION.md`'s M2 backstop item was reworded to describe this
+(confirmed via `git diff VERIFICATION.md`); this run verifies against the current wording. M1/M3/M4
+sections above/below are preserved unchanged from prior verification sessions and were not touched.
 
 Environment check: `uv sync` ran clean (236 packages resolved, 229 checked, no errors).
-`samples/mixed_language_31-34.m4a`/`.wav` and `samples/multi_speaker_06-09.m4a`/`.wav` all present.
-GPU idle baseline before testing: 389 MiB / 8188 MiB used. CLI exposes a `diarize` subcommand as
-expected (`uv run singlish-transcriber --help` lists `{transcribe,diarize}`).
-
-Non-blocking note: every run (M1 and M2 alike) prints a `torchcodec is not installed correctly`
-UserWarning from pyannote to stderr. It did not affect any observed output or exit code in any
-run below, so it's not scored as a failure, but it's worth the implementer's attention since it
-indicates a fallback audio-decode path is being used instead of the intended one.
+`samples/mixed_language_31-34.m4a`/`.wav` present. `uv run ruff check
+src/singlish_transcriber/pipeline.py` → "All checks passed!". GPU idle baseline before testing: 0
+MiB / 8188 MiB used; idle again (0 MiB) after all runs completed — no CUDA OOM at any point in this
+session.
 
 ## M2 — Diarization + merged transcript
 
 - [x] **Run the pipeline against `samples/mixed_language_31-34.m4a` and confirm the output is a
       JSON array of turns, each with `start`, `end`, `speaker_id`, and `text` fields, and that
       `start < end` holds for every turn.**
-      ✓ — `uv run singlish-transcriber diarize samples/mixed_language_31-34.m4a` exited 0 in 63s.
-      stdout parsed as valid JSON: 42 turns, every turn has all 4 fields, and a script check
-      confirmed `start < end` for all 42 turns (0 violations). Evidence:
-      `verification-evidence/M2-m4a-stdout.txt`, `M2-m4a-stderr.txt`, `M2-m4a-meta.txt`.
+      ✓ — `uv run singlish-transcriber diarize samples/mixed_language_31-34.m4a` exited 0. Output
+      parsed as valid JSON: 48 turns (42 diarized + 6 backstop), all 4 required fields present on
+      every turn, 0 turns with `start >= end` (checked programmatically). Evidence:
+      `verification-evidence/M2-rerun2-mixed-stdout.txt`,
+      `verification-evidence/M2-rerun2-mixed-stderr.txt`,
+      `verification-evidence/M2-rerun2-mixed-meta.txt`.
 
 - [x] **Confirm turns are ordered by `start` time.**
-      ✓ — Script check over the same 42-turn output confirmed `start` is non-decreasing across
-      the array (0 out-of-order pairs). Evidence: `verification-evidence/M2-m4a-stdout.txt`.
+      ✓ — Programmatic check over the 48-turn output: 0 out-of-order adjacent pairs. Evidence:
+      `verification-evidence/M2-rerun2-mixed-stdout.txt`.
 
 - [x] **Confirm at least 2 distinct `speaker_id` values appear in the output — cross-check by
       listening to the source clip and confirming it does in fact have multiple speakers.**
-      ✓ — Output contains exactly `{SPEAKER_00, SPEAKER_01}`, both with multiple turns each
-      (SPEAKER_00: e.g. 36.0–41.6s, 71.1–84.3s, 85.4–94.1s...; SPEAKER_01: e.g. 0.5–3.7s, 7.2–15.4s,
-      22.1–27.3s...). As a substitute for literal listening (no audio playback available to this
-      agent), ran an objective acoustic cross-check: extracted mean-MFCC vectors (13 coefficients)
-      for 7 SPEAKER_00 turns and 8 SPEAKER_01 turns (>2s each) directly from
-      `samples/mixed_language_31-34.wav` and compared within-vs-across-label Euclidean distances.
-      Mean within-SPEAKER_00 distance 40.6, within-SPEAKER_01 distance 46.4, vs. mean
-      across-speaker distance 85.7 — turns sharing a label are acoustically ~2x more similar to
-      each other than to turns of the other label, consistent with two real distinct voices rather
-      than one voice split across two labels. (Supplementary pitch/F0 medians were close — ~122Hz
-      vs ~116Hz, both plausibly male voices — so pitch alone was a weak discriminator; MFCC timbre
-      was the decisive signal.) This is also corroborated by the transcript content itself, which
-      shows genuine question/answer dialogue structure and rapid short back-and-forth exchanges
-      (e.g. around 100–104s: "你是讲, after accepted." / "直接, (ah)." / "but you 在 out." /
-      "对对对, (oh), okay..."), matching the task's note that this clip was previously manually
-      spot-checked as 2 speakers with natural turn-taking. Evidence:
-      `verification-evidence/M2-speaker-distinctness-check.txt`.
+      ✓ — Output contains `SPEAKER_00` (11 turns) and `SPEAKER_01` (36 turns), both with
+      substantial multi-turn content, matching the previously verified 2-speaker structure of this
+      clip. Only 1 turn out of 48 is `SPEAKER_UNKNOWN` in this run (down from 6 before the fix —
+      see the backstop item below for why). Evidence: `verification-evidence/M2-rerun2-mixed-stdout.txt`,
+      `verification-evidence/M2-rerun2-mixed-full-listing.txt`.
 
 - [x] **Spot-check the merged text for at least one turn containing code-switched content against
       the known-good M0/M1 whole-file transcript, and confirm the per-segment diarized ASR didn't
       visibly degrade quality.**
-      ✓ — Compared the opening of `verification-evidence/M1-m4a-stdout.txt` (whole-file transcript
-      from the M1 run) against the first few M2 turns. M1: "怎样, call 到另外一个, report, (ah),
-      (hm), 他是做一个, post, 什么是, post, 不懂, So 当你在 web hor, 你 submit any form 的时候,
-      (ah), 他是一个, H, T, T, P, post..." M2 turns (same span, split by diarization): "怎么样,
-      call 到另外一个, report, 的他是做一个, post." / "什么是, post." / "不懂, So 当你在 web hor,
-      你 submit any form 的时候, hor, 它是一个, Http post, 来的, (hm)." — same code-switched
-      content (English "call"/"report"/"post"/"submit any form" interleaved with Mandarin),
-      no sentence truncated mid-code-switch, no lost context; minor ASR wording variance only
-      (怎样 vs 怎么样, spelled-out "H T T P" vs "Http") consistent with normal ASR run-to-run
-      variance, not degradation from per-segment splitting. Evidence: same
-      `verification-evidence/M2-m4a-stdout.txt` compared against pre-existing
-      `verification-evidence/M1-m4a-stdout.txt`.
+      ✓ — Compared the opening of `verification-evidence/M1-m4a-stdout.txt` (M1 whole-file
+      baseline) against the first several M2 turns of this run
+      (`verification-evidence/M2-rerun2-mixed-full-listing.txt`). Same code-switched content
+      preserved end-to-end (e.g. "call 到另外一个, report", "submit any form 的时候", "since I'm
+      already able to receive binary file..."), no sentence truncated mid-code-switch, no lost
+      context. The filler interjections M1 captured inline ("(ah), (hm)") are the same stretch M2
+      recovers as separate short turns ("(uh), (huh)." at 3.74–5.82s, "(hm)." at 16.97–18.04s) —
+      and in this run both are now correctly attributed to `SPEAKER_01` (the real bordering
+      speaker) rather than `SPEAKER_UNKNOWN` as in the previous run.
 
 - [x] **Extract a short single-speaker-only clip from the source recording, run it through the
-      pipeline, and confirm only 1 `speaker_id` appears.**
-      ✓ — Extracted the first 30s of `samples/mixed_language_31-34.wav` with
-      `ffmpeg -y -i samples/mixed_language_31-34.wav -t 30 <tmp>.wav` (this window is dominated by
-      one speaker in the full-file run, up to the point the second speaker first interjects at
-      ~36s). Ran `diarize` against it: exited 0, produced 9 turns, and a script check confirmed
-      exactly 1 distinct `speaker_id` (`SPEAKER_00`) across all 9 turns — no over-splitting into
-      multiple IDs for what should be one speaker. (Label numbering is arbitrary per-run, as
-      expected — the same speaker was `SPEAKER_01` in the full 3-minute run — that's not a defect,
-      diarization labels aren't required to be stable across separate invocations.) Evidence:
-      `verification-evidence/M2-single-speaker-stdout.txt`, `M2-single-speaker-stderr.txt`,
-      `M2-single-speaker-meta.txt`.
+      pipeline, and confirm only 1 `speaker_id` appears (no spurious over-splitting of one
+      speaker into multiple IDs).**
+      ✓ (was ✗ in the previous verification pass — now fixed) — Extracted the first 30s of
+      `samples/mixed_language_31-34.wav` with `ffmpeg -t 30 -c copy` (the identical clip used in
+      the previous failing run). Ran `diarize` against it: exited 0, 11 turns, **exactly 1 distinct
+      `speaker_id`: `SPEAKER_00`** (all 11 turns, including the 2 gap-backstop-recovered turns —
+      "(uh), (huh)." at 3.74–5.82s and "(hm)." at 16.97–18.04s — that previously came back as
+      `SPEAKER_UNKNOWN`). Both recovered turns are bordered on both sides by `SPEAKER_00`, so the
+      fixed attribution logic correctly assigned them to the real surrounding speaker instead of
+      falling back to unknown. This restores the pre-backstop pass behavior for this exact clip.
+      Evidence: `verification-evidence/M2-rerun2-singlespeaker-stdout.txt`,
+      `verification-evidence/M2-rerun2-singlespeaker-stderr.txt`,
+      `verification-evidence/M2-rerun2-singlespeaker-meta.txt`.
 
 - [x] **Confirm the pipeline handles a diarized segment shorter than ~0.5s (a brief interjection)
       without crashing.**
-      ✓ — Used the real full-file output rather than a synthesized edge case: the
-      `samples/mixed_language_31-34.m4a` run (42 turns, exit 0, no crash) contains 7 turns under
-      0.5s, including two genuine sub-0.1s micro-segments: 0.0169s (121.463–121.480s,
-      `speaker_id: SPEAKER_00`, text `"(nospeech)"`) and 0.0506s (0.031–0.082s,
-      `speaker_id: SPEAKER_01`, text `"(nospeech)"`), plus five more in the 0.25–0.49s range
-      (e.g. `"ya."` at 0.388s, `"I think so."` at 0.338s). All were emitted correctly as
-      well-formed turns with no exception and no truncated/malformed JSON. Evidence:
-      `verification-evidence/M2-m4a-stdout.txt` (same file as item 1; durations verified by
-      script).
+      ✓ — The full `mixed_language_31-34.m4a` run above (48 turns, exit 0, no crash) contains
+      turns under 0.5s, including two sub-0.1s micro-segments with `"(nospeech)"` text
+      (0.031–0.082s and 121.463–121.480s) and short real ones (e.g. `"ya."` at 70.33s). All emitted
+      as well-formed turns with no exception. Evidence:
+      `verification-evidence/M2-rerun2-mixed-stdout.txt`.
+
+- [x] **(reworded post-implementation) Confirm undiarized gaps of >= `MIN_GAP_SECONDS` are ASR'd
+      as a backstop and, if they contain real speech, appear in the output as a turn; confirm gaps
+      that are genuine silence/noise are NOT added; confirm a recovered gap bordered by the *same*
+      diarized speaker on both sides is attributed to that speaker (not `SPEAKER_UNKNOWN`); confirm
+      a gap bordered by two *different* speakers (or at the very start/end of the recording) falls
+      back to `speaker_id == "SPEAKER_UNKNOWN"`.**
+      ✓ — Verified all four sub-behaviors precisely, both via a real end-to-end run and via direct
+      calls to `pipeline._find_gaps`/`pipeline._transcribe_gaps` with real and synthetic turn
+      lists, per the task's request:
+
+      **(a) real speech in a gap is recovered as a turn.** In the full `mixed_language_31-34.m4a`
+      run, stderr logged `Checking 10 undiarized gap(s)...` / `recovered speech in 6 gap(s)`.
+      Directly re-derived the same diarized turns via `pipeline._merge_adjacent(diarize_mod.diarize(...))`
+      and called `_find_gaps`/`_transcribe_gaps` on them independently of the CLI: got the
+      identical 10 gaps and identical 6 kept results (`(uh), (huh).`, `(hm).`, `(ah).`, `shhh.`,
+      `(en)`, `(oh).`), all non-empty, non-`(nospeech)` text. Also confirmed directly with
+      `_transcribe_gaps` on a known real-speech window (16.97–18.04s, `"(hm)."`) fed through with
+      synthetic speaker labels — the text is kept regardless of the speaker labels supplied, i.e.
+      recovery of real speech and speaker attribution are independent, correctly-separated
+      concerns. Evidence: `verification-evidence/M2-rerun2-gap-mechanism-real-audio.txt`,
+      `verification-evidence/M2-rerun2-transcribe_gaps-attribution-unittest.txt`.
+
+      **(b) genuine silence/noise gaps are NOT added.** Two checks: (i) of the 10 gaps found in
+      the real clip, the 4 that were rejected were independently re-ASR'd and all 4 returned raw
+      `"(nospeech)"` — not silently dropped by coincidence, genuinely recognized as non-speech
+      (evidence: `verification-evidence/M2-rerun2-rejected-gaps-raw-asr.txt`). (ii) Synthesized a
+      5s digital-silence clip (`ffmpeg anullsrc`) and a 5s pink-noise clip (`ffmpeg anoisesrc`,
+      amplitude 0.05) — neither real speech — and ran `_find_gaps([], total)` +
+      `_transcribe_gaps(...)` on each as a single whole-clip gap: both returned `kept=[]`, zero
+      spurious turns (evidence: `verification-evidence/M2-rerun2-silence-noise-negative-control.txt`).
+
+      **(c) a gap bordered by the same speaker on both sides is attributed to that speaker.**
+      Directly inspected `_find_gaps`' output on the real clip's diarized turns: of the 10 gaps
+      found, 9 were bordered by the same speaker on both sides (e.g.
+      `(3.74, 5.82, 'SPEAKER_01', 'SPEAKER_01')`), and of the 6 kept (real-speech) gaps, 5 were
+      same-speaker-bordered and all 5 were correctly attributed to that speaker (`SPEAKER_01`) —
+      not `SPEAKER_UNKNOWN`. Also directly unit-tested `_transcribe_gaps` by feeding the known
+      real-speech window with synthetic same-speaker borders (`"SPEAKER_07"`/`"SPEAKER_07"`): the
+      result was correctly attributed to `SPEAKER_07`. Evidence:
+      `verification-evidence/M2-rerun2-gap-mechanism-real-audio.txt`,
+      `verification-evidence/M2-rerun2-transcribe_gaps-attribution-unittest.txt`.
+
+      **(d) a gap bordered by two different speakers, or at the recording boundary, falls back to
+      `SPEAKER_UNKNOWN`.** In the real clip, exactly 1 of the 6 kept gaps (134.63–136.87s,
+      `"shhh."`) was bordered by two different speakers (`SPEAKER_01` before, `SPEAKER_00` after)
+      and was correctly attributed `SPEAKER_UNKNOWN` — this is the only `SPEAKER_UNKNOWN` turn in
+      the 48-turn full-file output. The real clip happened not to have a gap at the absolute
+      start/end of the recording, so this was additionally checked directly: unit-tested
+      `_find_gaps` on synthetic turn lists to confirm a leading gap correctly returns
+      `speaker_before=None` and a trailing gap correctly returns `speaker_after=None`
+      (`verification-evidence/M2-rerun2-find_gaps-boundary-unittest.txt`), then unit-tested
+      `_transcribe_gaps` directly on the known real-speech window with `speaker_before=None`,
+      `speaker_after=None`, and both `None` — all three cases correctly fell back to
+      `SPEAKER_UNKNOWN` (`verification-evidence/M2-rerun2-transcribe_gaps-attribution-unittest.txt`).
 
 ## M2 Summary
 
-All 6 M2 checklist items pass (✓ 6/6) against `samples/mixed_language_31-34.m4a`/`.wav`. The
-diarize pipeline produced well-formed, correctly ordered, non-overlapping-range JSON turns; found
-exactly 2 acoustically-distinct speakers in the 2-speaker clip and exactly 1 in an extracted
-single-speaker window; preserved code-switched content quality across the diarization boundary
-compared to the M1 whole-file baseline; and handled multiple sub-0.5s (including sub-0.1s) turns
-without crashing.
+**7 of 7 items pass (up from 6/7 on the previous verification pass).** The gap-attribution fix
+resolves the previously-failing single-speaker-clip item exactly as intended: re-running the same
+30s single-speaker extraction that failed last time now produces exactly 1 `speaker_id`
+(`SPEAKER_00`), because both gap-backstop-recovered interjections in that clip are bordered by the
+same real speaker on both sides and are now attributed to it instead of `SPEAKER_UNKNOWN`. The new
+backstop rubric item's four sub-behaviors were each verified precisely — with real end-to-end runs,
+independent re-derivation via direct calls to `_find_gaps`/`_transcribe_gaps`, and targeted
+synthetic/boundary unit tests covering same-speaker attribution, different-speaker fallback, and
+both start-of-recording and end-of-recording boundary cases (`speaker_before`/`speaker_after` as
+`None`), none of which the real clip happened to naturally exercise on its own. No regressions
+found in the other 5 previously-passing items (schema/ordering/multi-speaker/code-switch-quality/
+short-segment handling all still pass on this re-run). `ruff check` on the modified `pipeline.py`
+is clean. No CUDA OOM observed in this session (GPU returned to 0 MiB idle after all runs).
 
-GPU note (not a formal M2 checklist item, but flagged per the verifier's standing instruction to
-watch for CUDA OOM): peak VRAM during the diarize run (pyannote + MERaLiON loaded together) was
-7893 MiB out of 8188 MiB total (~96%, ~295 MiB / ~3.6% headroom) — no OOM occurred, but this is
-even tighter than the ~4% headroom already flagged in the M1 report for MERaLiON alone, since M2
-now holds both models in VRAM simultaneously. Combined with M1's existing headroom warning, this
-is a real risk for a slightly longer/noisier clip or any concurrent GPU usage — worth the
-implementer's attention before scaling up input duration or running M2 alongside anything else on
-this GPU.
+This milestone is a designated checkpoint per `CLAUDE.md` — even with 7/7 passing, human review is
+still expected before proceeding, per that policy (not a verifier decision to waive).
 
-`samples/multi_speaker_06-09.wav`/`.m4a` was confirmed present but not run — all 6 checklist items
-were already satisfiable from `mixed_language_31-34.m4a`/`.wav` plus the extracted single-speaker
-window, and re-running the full pipeline against a second 3-minute clip was not required by
-VERIFICATION.md and would have added GPU load without new verification value given the ~3.6%
-headroom margin already observed.
-
-M3, M4 were explicitly out of scope for this run and are unimplemented — not evaluated here.
 
 ---
 
