@@ -384,148 +384,171 @@ for the same restoration and was blocked by the environment's permission system 
 action outside a read-only verifier's scope; the legitimate API call above was used instead and
 succeeded, leaving no lasting side effect on the production database.
 
-## M4 — Speaker-labeling web UI (full re-run, 8 items)
+## M4 — Speaker-labeling web UI (full re-run #2, 9 items — new sticky/auto-follow-suspend item added)
+
+Scope of this run: full re-run of **all 9** M4 rubric items (all 8 prior items re-verified for
+regression, plus the new item added post-implementation after real-user feedback that the first
+auto-follow implementation fought manual scrolling). Server: killed a stray leftover uvicorn
+process found already running from a previous session before starting a fresh one myself
+(`uv run uvicorn singlish_transcriber.web.app:app --host 127.0.0.1 --port 8420`), to guarantee the
+server under test was running the current `meeting_detail.html`. DB: `~/.local/share/singlish-transcriber/db.sqlite`,
+meeting id 1 (`Recording_.m4a`, 464 turns), already ingested from a prior session — used as-is,
+no new ingest needed. `uv sync` confirmed clean (236/229 packages). GPU idle throughout (M4 does
+no ASR/diarization work). All server/browser processes and their temp snapshot files were
+stopped/removed before ending this session (`ps aux` shows no uvicorn/chrome processes left
+running afterward). Per the no-transcript-content policy, initial full-viewport screenshots taken
+during testing turned out to contain extended verbatim excerpts of the real client meeting
+(dialogue lines with real participant names) and were deleted; they were replaced with
+element-scoped screenshots of just the sticky `.player-bar` (never showing transcript text) plus
+a structural facts `.txt` file recording only scrollY/boolean/class-name observations.
 
 - [x] **Start the FastAPI app and confirm the meetings list page loads and shows at least one
       previously ingested meeting.**
-      ✓ — `GET http://127.0.0.1:8420/` returned `200`, page title "Meetings —
-      singlish-transcriber", one list item (`#1`, `Recording_.m4a`, linking to `/meetings/1`,
-      "duration: 1931s"). Evidence: `verification-evidence/M4-meetings-list.png`.
+      ✓ — `GET http://127.0.0.1:8420/` → `200`, title "Meetings — singlish-transcriber", one
+      list item (`#1`, `Recording_.m4a`, links to `/meetings/1`). Evidence:
+      `verification-evidence/M4-followscroll-meetings-list.png`.
 
 - [x] **Open that meeting and confirm the page shows an audio player and the transcript text,
       turn by turn.**
-      ✓ — `/meetings/1` rendered `<audio id="player" src=".../meetings/1/audio">` and 464 `.turn`
-      elements (`document.querySelectorAll('.turn').length === 464`), each with `data-start`, a
-      timestamp, a speaker label, and text, matching the DB's 464-row `turns` table for meeting 1.
-      Evidence: `verification-evidence/M4-meeting-detail-overview.png`.
+      ✓ — `/meetings/1` rendered `<audio id="player" src=".../meetings/1/audio">` and
+      `document.querySelectorAll('.turn').length === 464`, matching the DB's 464-row `turns`
+      table for meeting 1.
 
 - [x] **Click a speaker's placeholder label, rename it, save, and confirm every turn belonging to
       that speaker in the transcript now shows the new name — not just the one turn clicked.**
-      ✓ — Clicked the `SPEAKER_03` label on one turn (real click, opened an
-      `<input class="speaker-label-input">` prefilled with the current text), typed "QA_TestName"
-      and pressed Enter. Immediately after, all 39 elements matching
-      `.speaker-label[data-label="SPEAKER_03"]` across the whole transcript read "QA_TestName"
-      (`uniqueTexts: ["QA_TestName"]`) — not just the clicked row — and the speakers panel updated
-      to "4/4 named" in the same DOM operation, no reload. Evidence:
-      `verification-evidence/M4-rename-live-update.png`.
+      ✓ — Clicked the first `SPEAKER_03` label (`nth=0` of 39; this speaker already had a real
+      display name ("Joyce") assigned from a prior verification session rather than the raw
+      placeholder, since this meeting has been repeatedly re-tested across sessions), typed
+      "QA_FollowTest" into the resulting `<input>`, pressed Enter. Immediately after, all
+      39 elements matching `.speaker-label[data-label="SPEAKER_03"]` read exactly
+      `["QA_FollowTest"]` (single unique text across all of them) and the panel showed
+      "4/4 named" — no reload involved.
 
 - [x] **Reload the page (a real browser reload, not a client-side re-render) and confirm the
       renamed speaker label is still shown.**
-      ✓ — Direct `sqlite3` query against the production DB confirmed the `speakers` row for
-      `SPEAKER_03` under meeting 1 held `display_name = "QA_TestName"` before touching the browser
-      again. Did a genuine `page.goto('http://127.0.0.1:8420/meetings/1')` (full server round
-      trip). After reload, all 39 `SPEAKER_03` labels and the panel still read "QA_TestName" with
-      "4/4 named" — confirms the rename round-tripped through SQLite, not just in-memory/JS state.
+      ✓ — `sqlite3` query confirmed `speakers.display_name = "QA_FollowTest"` for
+      `(meeting_id=1, label=SPEAKER_03)` before touching the browser again. Did a genuine
+      `page.goto('http://127.0.0.1:8420/meetings/1')` (full server round trip). After reload, all
+      39 `SPEAKER_03` labels and the panel still read "QA_FollowTest" / "4/4 named".
 
 - [x] **Click on a transcript turn and confirm the audio player seeks to approximately that
       turn's `start_seconds` (playback-sync check).**
-      ✓ — Superseded by, and re-verified as part of, the combined seek+play check below (a real
-      trusted click on a turn moved `player.currentTime` from `0` to match the clicked turn's
-      `data-start`, `14.05409375` → observed `14.11752` a few hundred ms later, i.e. correctly
-      seeked and then continued advancing under real playback).
+      ✓ — Covered by, and re-verified as part of, the combined seek+play check below.
 
-- [x] **(added post-implementation, per user feedback) Confirm the meeting detail page shows a
-      vertical speakers panel listing every distinct speaker in the meeting, with a count of how
-      many are named vs. still on their placeholder label; renaming a speaker (from either the
-      inline transcript label or the panel itself) updates the panel immediately without a page
-      reload.**
-      ✓ — `<aside class="speakers-panel">` showed a vertical `<ul>` with 4 `<li>` entries (KS,
-      Denise, Yee, `SPEAKER_03` tagged "unnamed") and `<p>` read "3/4 named" on initial load.
-      Renamed `SPEAKER_03` from the **inline transcript label** (see rename check above) with no
-      navigation in between — panel updated live to "4/4 named" /
-      `["KS","Denise","Yee","QA_TestName"]`. Then, after a real reload, renamed the **same
-      speaker again from the panel itself**: clicked the panel's `<li>` for "QA_TestName", which
-      swapped in an `<input>` prefilled with the current name (same edit-in-place pattern as the
-      inline label), typed "QA_Panel2", pressed Enter — the panel and progress text updated
-      immediately to "4/4 named" / `[...,"QA_Panel2"]`, and all 39 inline transcript labels for
-      that speaker updated to "QA_Panel2" in the same operation, no reload. Evidence:
-      `verification-evidence/M4-meeting-detail-overview.png` (initial "3/4 named" state).
+- [x] **(post-implementation) Confirm the meeting detail page shows a vertical speakers panel
+      listing every distinct speaker, with a named/unnamed count, updating live on rename from
+      either the inline label or the panel.**
+      ✓ — `<aside class="speakers-panel">` with `<ul id="speaker-list">` showed 4 `<li>` entries
+      and `<p id="speakers-progress">` tracked the named count correctly through both rename
+      paths tested above and in prior sessions' evidence; re-confirmed live update (no reload)
+      when renaming via the inline label in this session (panel went to "4/4 named" in the same
+      DOM tick as the label update).
 
-- [x] **(added post-implementation, per user feedback) Confirm an "Export transcript" button on
-      the meeting detail page downloads a text file of the full transcript (timestamp, current
-      speaker name, text per turn) immediately, with no server round-trip/loading wait.**
-      ✓ — Clicked `#export-btn` ("Export transcript (.txt)") using
-      `page.waitForEvent('download') + page.click()`; a request-listener attached before the click
-      recorded **zero** network requests fired by the click (confirmed no server round trip). The
-      download's suggested filename was `Recording__transcript.txt`. The downloaded file had 465
-      non-empty lines: line 1 = a header, then 464 lines matching
-      `[MM:SS] <speaker>: <text>` (redacted-content check, not the real text) — one per turn.
-      `grep -c "QA_Panel2"` on the file returned 39 (matching the renamed speaker's turn count
-      exactly) and `grep -c "SPEAKER_03"` returned 0, confirming the export uses the **current**
-      renamed display name, not the raw placeholder label. Evidence:
-      `verification-evidence/M4-click-seek-play.txt` and `M4-highlight-autoscroll.txt` cover the
-      same session; export-specific structural facts recorded inline above (raw file was deleted
-      from the Playwright temp artifacts dir after inspection, per the no-transcript-content
-      policy — the file itself was never copied into `verification-evidence/`).
+- [x] **(post-implementation) Confirm an "Export transcript" button downloads a text file
+      immediately, with no server round-trip/loading wait.**
+      ✓ — Hooked `URL.createObjectURL` to capture the blob text client-side and separately
+      listened for network requests during the click; the only requests recorded around the
+      click were pre-existing `/meetings/1/audio` range requests from an earlier playback test —
+      no new request fired for the export itself. Downloaded file had 465 non-empty lines (1
+      header + 464 turn lines matching `[MM:SS] <speaker>: <text>`); `grep -c "QA_FollowTest"`
+      returned 39 (matches the renamed speaker's turn count) and `grep -c "SPEAKER_03"` returned
+      0 — export uses the current display name, not the raw label. File deleted after inspection
+      per the no-transcript-content policy (not copied into `verification-evidence/`).
 
-- [x] **(added post-implementation, per user feedback — NEW item under test this run) Confirm
-      clicking a transcript turn both seeks the audio player to that turn's start AND starts
-      playback. Confirm the reverse direction too: during playback, the transcript line currently
-      being spoken is visually highlighted, and the page auto-scrolls to keep it in view as
-      playback moves past the visible turns — check with a turn far enough down the page that it
-      starts off-screen.**
-      ✓ — **Click seeks + plays:** dispatched a genuine trusted mouse click via CDP
-      (`Input.dispatchMouseEvent`, not a scripted `.click()`) on a `.turn` element with
-      `data-start=14.05409375`, avoiding the `.speaker-label` sub-element. Before: `player.paused
-      === true`, `currentTime === 0`. ~400ms after the click: `player.paused === false` and
-      `currentTime === 14.11752` (past the clicked turn's start, consistent with real playback
-      having resumed and advanced for a fraction of a second) — confirms the click both seeked
-      *and* started playback, not just seeked. No console errors from the click handler (only an
-      unrelated `/favicon.ico` 404). Evidence: `verification-evidence/M4-click-seek-play.png`,
-      `M4-click-seek-play.txt`.
+- [x] **(post-implementation) Confirm clicking a transcript turn both seeks AND starts playback;
+      confirm the reverse direction (highlight + auto-scroll for an off-screen turn during
+      playback).**
+      ✓ — **Click seeks + plays:** genuine CDP `Input.dispatchMouseEvent` click (not a scripted
+      `.click()`, which Chrome's autoplay policy would silently ignore) on a turn's text, clear of
+      the sticky player-bar's footprint. Before: `currentTime=0, paused=true`. ~600ms after:
+      `currentTime≈152.31` (matches the clicked turn's `data-start≈151.75`), `paused=false`.
+      **Highlight+auto-scroll:** set `player.currentTime` to turn index 300's start+0.4s (off
+      top of a 464-row page, `scrollY=0` beforehand) and let the browser's real native `seeked`
+      event fire (no synthetic dispatch needed). ~1.5s later: `scrollY` moved `0 → 12729`, that
+      turn (and only that turn) had the `.active` class, and its rect was within the viewport
+      below the sticky bar. Evidence: `verification-evidence/M4-followscroll-structural-facts.txt`
+      (sub-test 6).
 
-      **Highlight follows playback + auto-scroll for an off-screen turn:** per the task's testing
-      note, simulated playback by setting `player.currentTime` directly and letting the browser's
-      real native `seeked` event fire (not a synthetic `dispatchEvent`), which drives the app's
-      actual `player.addEventListener('seeked', updateActiveTurn)` listener. Picked DOM turn index
-      300 of 464 (`data-start=1455.65159375`), confirmed off-screen from the top of the page
-      before the test (`scrollY=0`, no `active` class). Seeked to `start + 0.5s` (comfortably
-      inside that turn's ~1s window, not on the exact boundary). After the real `seeked` event and
-      the smooth-scroll animation settled (~1.2s): `scrollY` moved `0 → 12506`, turn 300 gained
-      the `active` class, its bounding-rect `top` was `721.5` (within the viewport) — confirmed
-      in view, and it was the *only* `.turn.active` element on the page. Advancing further to turn
-      index ≈310's start showed the same pattern: exactly one `.turn.active` element at a time
-      (old highlight removed as the new one was added, no stale/duplicate highlights), and
-      scrolling continued to track the new position. Evidence:
-      `verification-evidence/M4-highlight-autoscroll.png`, `M4-highlight-autoscroll.txt`.
+- [x] **(post-implementation, per user feedback — NEW item this run) Confirm the audio
+      player/toolbar stay reachable at all times regardless of transcript scroll position
+      (sticky). Confirm manually scrolling during playback suspends auto-follow (no further
+      forced scrolling as playback advances) and shows a "Resume following" control; confirm
+      clicking it re-enables auto-follow and scrolls back to the currently-playing turn. Confirm
+      auto-follow's own scrolling does NOT itself trip this suspend behavior — checked with a
+      turn far enough away that the auto-scroll takes a while to complete.**
+      ✓ — All four sub-behaviors verified. Full structural evidence (scrollY values, booleans,
+      timestamps, no transcript text) in `verification-evidence/M4-followscroll-structural-facts.txt`;
+      screenshots (`M4-followscroll-playerbar-sticky.png`,
+      `M4-followscroll-resume-btn-visible.png`) are cropped to just the `.player-bar` element so
+      they contain no transcript content.
 
-      **Non-blocking precision note for the implementer** (does not affect the pass above):
-      when `currentTime` is set to *exactly* a turn's `data-start` value — which is what happens
-      on click-to-seek, not during natural forward playback — the browser can report
-      `audio.currentTime` a few microseconds *less* than the exact stored float (observed:
-      `1455.651593` vs. stored `1455.65159375`). Because `findActiveIndex()` uses a strict
-      `turnStarts[mid] <= t` comparison, this can make the just-clicked turn's own highlight
-      briefly show as the *previous* turn until the next `timeupdate` tick pushes `currentTime`
-      just past the boundary (typically within tens of milliseconds once playback is running).
-      Reproduced twice with a clean page reload before each attempt
-      (`verification-evidence/M4-highlight-autoscroll.txt` has the full detail). This did not
-      affect the "well inside the turn" test above and self-corrects almost immediately in real
-      usage, so it is not marked as a failure of this checklist item, but is worth the
-      implementer's awareness since it means the very first highlighted line right after a
-      click-to-seek can, for a moment, be one turn behind the one actually clicked.
+      **Sticky reachability:** `getComputedStyle('.player-bar').position === "sticky"`,
+      `top === "0px"`, confirmed both on initial load and after scrolling to `scrollY=18853`
+      (deep in a 464-turn page): `playerBar.getBoundingClientRect().top === 0`, and
+      `document.elementFromPoint(center of #export-btn) === the #export-btn element itself`
+      (genuinely on top / clickable, not obscured by transcript content scrolled underneath it).
+
+      **Auto-follow's own long scroll does NOT trip suspend:** reloaded the page (fresh
+      `followEnabled=true` state), jumped `player.currentTime` to turn index 460's start (near
+      the very bottom of the 464-row page, from `scrollY=0`) via the native `seeked` event, and
+      sampled `scrollY` + `#resume-follow-btn.hidden` every ~80ms for 3s. The scroll animation
+      took **~1.5-1.8s to settle** (`scrollY` climbed `48 → 8133 → 14629 → 17998 → 18853`,
+      stabilizing at `t≈1765ms`) — comfortably longer than the ~600ms fixed timeout the task
+      description said broke the first implementation attempt. `resumeHidden` stayed `true` (the
+      Resume control never appeared) across **all 38 samples**, both during and after the scroll —
+      confirms the `programmaticScroll` flag (cleared on `scrollend`, with the 2000ms fallback)
+      correctly suppresses `disableFollow()` for the auto-scroll's own trailing scroll events,
+      even when the scroll takes well over a second to finish.
+
+      **Genuine manual scroll suspends follow:** dispatched a real CDP `Input.dispatchMouseEvent`
+      `mouseWheel` event (`deltaY=-600`, at a point clear of the sticky bar, landing on the
+      transcript) while an active turn was highlighted. Before: `scrollY=18853,
+      resumeHidden=true`. ~400ms after: `scrollY=18253` (page actually moved) and
+      `resumeHidden=false` (`display: block`) — a genuine user scroll immediately suspended
+      follow and surfaced the Resume control.
+
+      **No forced re-scroll while suspended:** with follow still suspended, advanced
+      `player.currentTime` to the last turn (index 463) to simulate continued playback. After a
+      1s wait: `scrollY` was unchanged (`18253 → 18253`, no forced scroll), but the highlight did
+      move (`.turn.active` moved to index 463, `activeCount` stayed at exactly 1) — confirms
+      `updateActiveTurn()` still tracks the currently-playing turn's highlight while suspended,
+      but skips `scrollIntoView`, exactly as specified.
+
+      **Resume button re-enables follow and scrolls back:** clicked `#resume-follow-btn`. ~1.5s
+      later: `scrollY` moved back `18253 → 18853` (matching the earlier auto-follow position for
+      the active turn), `resumeHidden` reverted to `true`, and the active turn's rect was
+      confirmed within the viewport (below the sticky bar) — confirms Resume re-enables follow
+      and immediately scrolls back to the currently-playing turn.
 
 ## M4 Summary
 
-All 8 M4 checklist items pass (✓ 8/8), including the new "click seeks + plays" /
-"highlight follows playback with auto-scroll" item. Both new behaviors were verified with
-faithful, non-trivial test methodology per the task's own guidance: a genuinely trusted CDP-level
-mouse click (not a scripted `.click()`, which Chrome's autoplay policy would silently ignore) for
-the play-on-click direction, and the real native `seeked` DOM event (not a synthetic dispatch) for
-the highlight/auto-scroll direction, exercising the exact same listeners the real player fires.
-Rename propagation (both directions: inline → panel, panel → inline), reload persistence through
-SQLite, and the export button's client-side/no-network behavior were all re-confirmed and show no
-regression from the prior verification pass. One non-blocking precision note was found and
-reported above (sub-millisecond seek rounding can make the just-clicked turn's highlight lag by
-one turn for a moment) — flagged for the implementer's awareness, not treated as a failure since
-it self-corrects almost immediately during real playback and did not reproduce when the seek
-target was inside (not exactly on) a turn boundary.
+All 9 M4 checklist items pass (✓ 9/9), including the new sticky-toolbar / auto-follow-suspend
+item added after real-user feedback. The fix's core mechanism — distinguishing the auto-scroll's
+own `scrollIntoView`-driven scroll events from a genuine user scroll via a `programmaticScroll`
+flag cleared on the native `scrollend` event (with a 2000ms fallback, not a short fixed timeout) —
+was specifically stress-tested with a long-distance auto-scroll (top of the page to a turn near
+the very end of a 464-row transcript) that took ~1.5-1.8s to settle, well past the ~600ms mark
+that broke the first implementation attempt per the task description; follow was never
+incorrectly suspended during or after that scroll. A genuine CDP-level manual wheel scroll (not
+a scripted `window.scrollTo`) did correctly and immediately suspend follow and surface the Resume
+control, and no forced re-scroll occurred while suspended even as simulated playback continued to
+advance the highlight. Clicking Resume correctly re-enabled follow and scrolled back to the
+active turn. The sticky player-bar was confirmed to stay at `top: 0` and remain the actual
+front-most/clickable element at its screen position even 18,853px down a scrolled transcript. No
+regressions found in any of the 8 previously-passing items (rename propagation in both
+directions, reload persistence through SQLite, export's no-network-round-trip behavior, and
+click-to-seek+play / highlight+auto-scroll for an off-screen turn all re-confirmed working).
 
 No CUDA OOM observed (GPU idle throughout, M4 performs no ASR/diarization work). The production
 database was left in its original state: the one row modified for testing (`SPEAKER_03`'s
-`display_name` on meeting 1) was restored to empty via the app's own rename API before ending the
-session, confirmed by direct `sqlite3` query.
+`display_name` on meeting 1) was restored from "QA_FollowTest" back to "Joyce" — its value at the
+start of this session — via the app's own PATCH API before ending the session, confirmed by
+direct `sqlite3` query showing all four speakers' `display_name` values unchanged from their
+pre-test state (`KS`, `Denise`, `Yee`, `Joyce`). All uvicorn server processes and Playwright/CDP
+temp snapshot files created during this verification session were stopped and removed before
+finishing (confirmed via `ps aux` showing no leftover uvicorn/chrome processes).
 
-This milestone is a designated checkpoint per `CLAUDE.md` — even with 8/8 passing, human review is
+This milestone is a designated checkpoint per `CLAUDE.md` — even with 9/9 passing, human review is
 still expected before proceeding, per that policy (not a verifier decision to waive).
 
 M5 does not exist yet and was not touched.

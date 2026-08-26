@@ -7,13 +7,21 @@
     body { font-family: system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 1100px; }
     h1 { font-size: 1.2rem; word-break: break-all; }
     a.back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }
-    audio { width: 100%; margin: 1rem 0; }
-    .toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0 1rem; }
-    .export-btn {
+
+    /* Sticky so play/pause stays reachable no matter where auto-follow has scrolled the page. */
+    .player-bar {
+      position: sticky; top: 0; z-index: 10; background: #fff;
+      padding: 0.75rem 0; margin: 0 0 0.5rem; border-bottom: 1px solid #eee;
+    }
+    audio { width: 100%; display: block; }
+    .toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0 0; }
+    .export-btn, .resume-follow-btn {
       font: inherit; font-size: 0.85rem; padding: 0.4rem 0.8rem; border-radius: 6px;
       border: 1px solid #ccc; background: #f8f8f8; cursor: pointer;
     }
-    .export-btn:hover { background: #eee; }
+    .export-btn:hover, .resume-follow-btn:hover { background: #eee; }
+    .resume-follow-btn { border-color: #1d4ed8; color: #1d4ed8; background: #eff6ff; }
+    .resume-follow-btn[hidden] { display: none; }
     .layout { display: flex; gap: 2rem; align-items: flex-start; }
     .main { flex: 1 1 auto; min-width: 0; }
     .turn { padding: 0.5rem 0; border-bottom: 1px solid #eee; cursor: pointer; border-left: 3px solid transparent; }
@@ -29,7 +37,7 @@
     .turn-text { white-space: pre-wrap; }
 
     .speakers-panel {
-      flex: 0 0 220px; position: sticky; top: 1rem;
+      flex: 0 0 220px; position: sticky; top: 6.5rem;
       border: 1px solid #eee; border-radius: 8px; padding: 0.75rem 1rem;
     }
     .speakers-panel h2 { font-size: 0.9rem; margin: 0 0 0.25rem; }
@@ -52,10 +60,13 @@
   <a class="back" href="/">&larr; all meetings</a>
   <h1>{{ meeting.filename }}</h1>
 
-  <audio id="player" controls src="/meetings/{{ meeting.id }}/audio"></audio>
+  <div class="player-bar">
+    <audio id="player" controls src="/meetings/{{ meeting.id }}/audio"></audio>
 
-  <div class="toolbar">
-    <button class="export-btn" id="export-btn" type="button">Export transcript (.txt)</button>
+    <div class="toolbar">
+      <button class="export-btn" id="export-btn" type="button">Export transcript (.txt)</button>
+      <button class="resume-follow-btn" id="resume-follow-btn" type="button" hidden>&darr; Resume following</button>
+    </div>
   </div>
 
   <div class="layout">
@@ -82,18 +93,63 @@
     const meetingId = {{ meeting.id }};
     const player = document.getElementById('player');
 
+    // --- follow playback: highlight + auto-scroll the turn currently playing ---
+
+    const turnEls = Array.from(document.querySelectorAll('#transcript .turn'));
+    const turnStarts = turnEls.map(el => parseFloat(el.dataset.start));
+    const resumeFollowBtn = document.getElementById('resume-follow-btn');
+
+    // Auto-scroll fights the user if they try to scroll away (e.g. to reach the player
+    // controls, or just to reread something) - so a manual scroll suspends it until the user
+    // explicitly asks to resume, or jumps to a turn themselves. `programmaticScroll` tracks
+    // whether a scroll event was caused by our own scrollIntoView (ignored) vs. a real user
+    // scroll (which suspends follow) - cleared on the 'scrollend' event so a long smooth-scroll
+    // to a far-away turn doesn't get mistaken for a manual scroll partway through.
+    let followEnabled = true;
+    let programmaticScroll = false;
+    let programmaticScrollFallback = null;
+
+    function enableFollow() {
+      followEnabled = true;
+      resumeFollowBtn.hidden = true;
+    }
+
+    function disableFollow() {
+      if (!followEnabled) return;
+      followEnabled = false;
+      resumeFollowBtn.hidden = false;
+    }
+
+    function scrollToActiveTurn(el) {
+      programmaticScroll = true;
+      clearTimeout(programmaticScrollFallback);
+      programmaticScrollFallback = setTimeout(() => { programmaticScroll = false; }, 2000);
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    window.addEventListener('scrollend', () => {
+      programmaticScroll = false;
+      clearTimeout(programmaticScrollFallback);
+    });
+
+    window.addEventListener('scroll', () => {
+      if (programmaticScroll) return;
+      disableFollow();
+    }, { passive: true });
+
+    resumeFollowBtn.addEventListener('click', () => {
+      enableFollow();
+      if (activeIndex >= 0) scrollToActiveTurn(turnEls[activeIndex]);
+    });
+
     document.querySelectorAll('.turn').forEach(turnEl => {
       turnEl.addEventListener('click', (e) => {
         if (e.target.classList.contains('speaker-label')) return;
         player.currentTime = parseFloat(turnEl.dataset.start);
         if (player.paused) player.play();
+        enableFollow();
       });
     });
-
-    // --- follow playback: highlight + auto-scroll the turn currently playing ---
-
-    const turnEls = Array.from(document.querySelectorAll('#transcript .turn'));
-    const turnStarts = turnEls.map(el => parseFloat(el.dataset.start));
 
     function findActiveIndex(t) {
       // last turn whose start <= t
@@ -114,9 +170,11 @@
       if (idx < 0) return;
       const el = turnEls[idx];
       el.classList.add('active');
+      if (!followEnabled) return;
       const rect = el.getBoundingClientRect();
-      const inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
-      if (!inView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const headerBottom = document.querySelector('.player-bar').getBoundingClientRect().bottom;
+      const inView = rect.top >= headerBottom && rect.bottom <= window.innerHeight;
+      if (!inView) scrollToActiveTurn(el);
     }
 
     player.addEventListener('timeupdate', updateActiveTurn);

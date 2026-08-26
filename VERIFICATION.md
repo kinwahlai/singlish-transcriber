@@ -121,3 +121,12 @@ English/Mandarin/Singlish excerpt correctly, peaked at ~8.15GB VRAM regardless o
       during playback, the transcript line currently being spoken is visually highlighted, and
       the page auto-scrolls to keep it in view as playback moves past the visible turns — check
       with a turn far enough down the page that it starts off-screen.
+- [ ] (added post-implementation, per user feedback — the first version of auto-follow fought
+      the user's own scrolling, making it impossible to scroll away, e.g. to reach the player
+      controls) Confirm the audio player/toolbar stay reachable at all times regardless of
+      transcript scroll position (sticky). Confirm that manually scrolling the page during
+      playback suspends auto-follow (no further forced scrolling as playback advances) and shows
+      a "Resume following" control; confirm clicking it re-enables auto-follow and scrolls back
+      to the currently-playing turn. Confirm auto-follow's own scrolling does NOT itself trip
+      this suspend behavior (i.e. it doesn't mistake its own scroll for a manual one) — check
+      with a turn far enough away that the auto-scroll takes a while to complete.
