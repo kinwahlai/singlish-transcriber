@@ -4,12 +4,21 @@
   <meta charset="utf-8">
   <title>{{ meeting.filename }} — singlish-transcriber</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 780px; margin: 2rem auto; padding: 0 1rem; }
+    body { font-family: system-ui, sans-serif; margin: 2rem auto; padding: 0 1rem; max-width: 1100px; }
     h1 { font-size: 1.2rem; word-break: break-all; }
     a.back { color: #2563eb; text-decoration: none; font-size: 0.9rem; }
     audio { width: 100%; margin: 1rem 0; }
-    .turn { padding: 0.5rem 0; border-bottom: 1px solid #eee; cursor: pointer; }
+    .toolbar { display: flex; align-items: center; gap: 0.75rem; margin: 0.5rem 0 1rem; }
+    .export-btn {
+      font: inherit; font-size: 0.85rem; padding: 0.4rem 0.8rem; border-radius: 6px;
+      border: 1px solid #ccc; background: #f8f8f8; cursor: pointer;
+    }
+    .export-btn:hover { background: #eee; }
+    .layout { display: flex; gap: 2rem; align-items: flex-start; }
+    .main { flex: 1 1 auto; min-width: 0; }
+    .turn { padding: 0.5rem 0; border-bottom: 1px solid #eee; cursor: pointer; border-left: 3px solid transparent; }
     .turn:hover { background: #f8f8f8; }
+    .turn.active { background: #eff6ff; border-left-color: #1d4ed8; }
     .turn-time { color: #999; font-size: 0.75rem; margin-right: 0.5rem; }
     .speaker-label {
       font-weight: 600; color: #1d4ed8; margin-right: 0.5rem; cursor: text;
@@ -18,6 +27,25 @@
     .speaker-label:hover { border-bottom-color: #1d4ed8; }
     .speaker-label-input { font-weight: 600; font-size: 1em; width: 8em; }
     .turn-text { white-space: pre-wrap; }
+
+    .speakers-panel {
+      flex: 0 0 220px; position: sticky; top: 1rem;
+      border: 1px solid #eee; border-radius: 8px; padding: 0.75rem 1rem;
+    }
+    .speakers-panel h2 { font-size: 0.9rem; margin: 0 0 0.25rem; }
+    .speakers-progress { font-size: 0.78rem; color: #666; margin: 0 0 0.75rem; }
+    .speaker-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+    .speaker-list li {
+      display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+      font-size: 0.85rem; cursor: text; padding: 0.15rem 0;
+    }
+    .speaker-list .panel-name { font-weight: 600; color: #1d4ed8; }
+    .speaker-list .panel-name.unnamed { color: #999; font-weight: 500; font-style: italic; }
+    .speaker-list .badge {
+      font-size: 0.68rem; padding: 0.05rem 0.4rem; border-radius: 999px;
+      background: #fef3c7; color: #92400e; white-space: nowrap;
+    }
+    .speaker-list input { font: inherit; font-size: 0.85rem; font-weight: 600; width: 100%; }
   </style>
 </head>
 <body>
@@ -26,14 +54,28 @@
 
   <audio id="player" controls src="/meetings/{{ meeting.id }}/audio"></audio>
 
-  <div id="transcript">
-    {% for turn in meeting.turns %}
-    <div class="turn" data-start="{{ turn.start }}">
-      <span class="turn-time">{{ "%.1f"|format(turn.start) }}s</span>
-      <span class="speaker-label" data-label="{{ turn.speaker_label }}">{{ turn.speaker_display_name or turn.speaker_label }}</span>
-      <span class="turn-text">{{ turn.text }}</span>
+  <div class="toolbar">
+    <button class="export-btn" id="export-btn" type="button">Export transcript (.txt)</button>
+  </div>
+
+  <div class="layout">
+    <div class="main">
+      <div id="transcript">
+        {% for turn in meeting.turns %}
+        <div class="turn" data-start="{{ turn.start }}">
+          <span class="turn-time">{{ "%.1f"|format(turn.start) }}s</span>
+          <span class="speaker-label" data-label="{{ turn.speaker_label }}">{{ turn.speaker_display_name or turn.speaker_label }}</span>
+          <span class="turn-text">{{ turn.text }}</span>
+        </div>
+        {% endfor %}
+      </div>
     </div>
-    {% endfor %}
+
+    <aside class="speakers-panel">
+      <h2>Speakers</h2>
+      <p class="speakers-progress" id="speakers-progress"></p>
+      <ul class="speaker-list" id="speaker-list"></ul>
+    </aside>
   </div>
 
   <script>
@@ -44,8 +86,55 @@
       turnEl.addEventListener('click', (e) => {
         if (e.target.classList.contains('speaker-label')) return;
         player.currentTime = parseFloat(turnEl.dataset.start);
+        if (player.paused) player.play();
       });
     });
+
+    // --- follow playback: highlight + auto-scroll the turn currently playing ---
+
+    const turnEls = Array.from(document.querySelectorAll('#transcript .turn'));
+    const turnStarts = turnEls.map(el => parseFloat(el.dataset.start));
+
+    function findActiveIndex(t) {
+      // last turn whose start <= t
+      let lo = 0, hi = turnStarts.length - 1, ans = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (turnStarts[mid] <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      return ans;
+    }
+
+    let activeIndex = -1;
+    function updateActiveTurn() {
+      const idx = findActiveIndex(player.currentTime);
+      if (idx === activeIndex) return;
+      if (activeIndex >= 0) turnEls[activeIndex].classList.remove('active');
+      activeIndex = idx;
+      if (idx < 0) return;
+      const el = turnEls[idx];
+      el.classList.add('active');
+      const rect = el.getBoundingClientRect();
+      const inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+      if (!inView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    player.addEventListener('timeupdate', updateActiveTurn);
+    player.addEventListener('seeked', updateActiveTurn);
+
+    function renameSpeaker(label, newName) {
+      return fetch(`/api/meetings/${meetingId}/speakers/${encodeURIComponent(label)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ display_name: newName }),
+      }).then(res => {
+        if (!res.ok) return false;
+        document.querySelectorAll(`.speaker-label[data-label="${CSS.escape(label)}"]`)
+          .forEach(el => { el.textContent = newName; });
+        renderSpeakerPanel();
+        return true;
+      });
+    }
 
     function startEdit(labelEl) {
       const label = labelEl.dataset.label;
@@ -66,16 +155,7 @@
         const newName = input.value.trim();
         input.replaceWith(labelEl);
         if (!newName || newName === current) return;
-
-        fetch(`/api/meetings/${meetingId}/speakers/${encodeURIComponent(label)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ display_name: newName }),
-        }).then(res => {
-          if (!res.ok) return;
-          document.querySelectorAll(`.speaker-label[data-label="${CSS.escape(label)}"]`)
-            .forEach(el => { el.textContent = newName; });
-        });
+        renameSpeaker(label, newName);
       }
 
       input.addEventListener('keydown', (e) => {
@@ -91,6 +171,104 @@
         e.stopPropagation();
         startEdit(labelEl);
       });
+    });
+
+    // --- speakers panel: derived from the transcript, so it always reflects reality ---
+
+    function collectSpeakers() {
+      const seen = new Map(); // label -> current display text, in order of first appearance
+      document.querySelectorAll('#transcript .speaker-label').forEach(el => {
+        if (!seen.has(el.dataset.label)) seen.set(el.dataset.label, el.textContent);
+      });
+      return seen;
+    }
+
+    function startPanelEdit(li, label, current) {
+      const nameEl = li.querySelector('.panel-name');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = current;
+      nameEl.replaceWith(input);
+      input.focus();
+      input.select();
+
+      let committed = false;
+      function commit() {
+        if (committed) return;
+        committed = true;
+        const newName = input.value.trim();
+        if (newName && newName !== current) {
+          renameSpeaker(label, newName);
+        } else {
+          renderSpeakerPanel();
+        }
+      }
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); committed = true; renderSpeakerPanel(); }
+      });
+      input.addEventListener('blur', commit);
+    }
+
+    function renderSpeakerPanel() {
+      const speakers = collectSpeakers();
+      const list = document.getElementById('speaker-list');
+      list.innerHTML = '';
+      let namedCount = 0;
+
+      speakers.forEach((currentName, label) => {
+        const isUnnamed = currentName === label;
+        if (!isUnnamed) namedCount++;
+
+        const li = document.createElement('li');
+
+        const nameEl = document.createElement('span');
+        nameEl.className = 'panel-name' + (isUnnamed ? ' unnamed' : '');
+        nameEl.textContent = currentName;
+        li.appendChild(nameEl);
+
+        if (isUnnamed) {
+          const badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = 'unnamed';
+          li.appendChild(badge);
+        }
+
+        li.addEventListener('click', () => startPanelEdit(li, label, currentName));
+        list.appendChild(li);
+      });
+
+      document.getElementById('speakers-progress').textContent =
+        `${namedCount}/${speakers.size} named`;
+    }
+
+    renderSpeakerPanel();
+
+    // --- export ---
+
+    function formatTimestamp(seconds) {
+      const m = Math.floor(seconds / 60);
+      const s = Math.floor(seconds % 60);
+      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    document.getElementById('export-btn').addEventListener('click', () => {
+      const lines = [`{{ meeting.filename }}`, ''];
+      document.querySelectorAll('#transcript .turn').forEach(turnEl => {
+        const start = parseFloat(turnEl.dataset.start);
+        const speaker = turnEl.querySelector('.speaker-label').textContent;
+        const text = turnEl.querySelector('.turn-text').textContent;
+        lines.push(`[${formatTimestamp(start)}] ${speaker}: ${text}`);
+      });
+      const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `{{ meeting.filename }}`.replace(/\.[^.]+$/, '') + '_transcript.txt';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     });
   </script>
 </body>

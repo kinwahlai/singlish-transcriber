@@ -335,117 +335,197 @@ avoidable import overhead per `show`/`ingest` invocation, not a correctness bug.
 
 M4 was explicitly out of scope for this run and is unimplemented — not evaluated here.
 
-# M4 section (this run)
 
-Scope of this run: **M4 only** ("Speaker-labeling web UI"), per verification request. M1/M2/M3
-sections above are preserved unchanged from prior verification sessions.
+# M4 section (this run — re-verification #3, focused on the new "click seeks+plays / highlight follows playback" rubric item)
 
-Environment check: `uv sync` ran clean (236 packages resolved, 229 checked, no errors).
-`samples/mixed_language_31-34.m4a` confirmed present. GPU idle baseline before testing: 0 MiB /
-8188 MiB used.
+Scope of this run: **M4 only** ("Speaker-labeling web UI"), full re-run of the entire M4 rubric
+(8 items, including the newest item added at the end of the M4 section per user feedback:
+click-to-seek-and-play plus playback-follows-highlight/auto-scroll). Only
+`src/singlish_transcriber/web/templates/meeting_detail.html` changed since the last verification
+pass — confirmed no other files under `src/singlish_transcriber/web/` were touched. Prior M4
+sections above are preserved unchanged as history; this section supersedes them as the current
+state of the milestone.
 
-Setup: used a fresh, isolated DB at
-`/tmp/claude-1000/.../scratchpad/m4_verify.sqlite` (not the developer's default DB). Ran
-`uv run singlish-transcriber ingest samples/mixed_language_31-34.m4a --db <isolated path>`, which
-exited 0 in ~71s and printed meeting id `1`. Direct `sqlite3` query confirmed 1 row in `meetings`,
-2 rows in `speakers` (`SPEAKER_00`, `SPEAKER_01`, both with `display_name` initially NULL), and 42
-rows in `turns` — this is the same pipeline already verified in M2/M3, re-run here only to give
-the web app something real to serve. Started the app with
-`SINGLISH_TRANSCRIBER_DB=<isolated path> uv run uvicorn singlish_transcriber.web.app:app --port
-8971` in the background; confirmed it was listening (`curl -o /dev/null -w '%{http_code}'` on `/`
-returned `200`) before driving it with Playwright. Playwright's bundled Chrome was not installed
-in this environment and had to be installed via `npx playwright install chrome` before any
-browser automation could run — noting this since a from-scratch environment would need that step
-too. Server was killed via `kill` on its PID at the end of the run and confirmed no longer
-listening on port 8971 (`ss -tlnp` showed nothing bound to that port afterward).
+Environment check: `uv run ruff check .` → "All checks passed!". GPU idle baseline before and
+after testing: 0 MiB / 8188 MiB used (M4 performs no ASR/diarization work).
 
-## M4 — Speaker-labeling web UI
+Setup: used the already-running production app instance
+(`python3 -m uvicorn singlish_transcriber.web.app:app --host 127.0.0.1 --port 8420`, PID 69914,
+running since a prior session, confirmed reachable via `curl` → `200` before testing) against the
+default production DB (`~/.local/share/singlish-transcriber/db.sqlite`), which already contains
+real meeting id 1 (a real client recording, 464 turns, 4 speakers, 3 already named: KS, Denise,
+Yee; 1 unnamed placeholder: `SPEAKER_03`), per the task's explicit instruction that this was an
+acceptable, deliberate choice. No transcript text from this meeting is quoted verbatim anywhere in
+this report or its evidence files — only turn indices, timestamps, class names, counts, and other
+structural facts. All browser interaction used the MCP Playwright tool (real Chromium), including
+a genuine trusted mouse click dispatched via Chrome DevTools Protocol
+(`Input.dispatchMouseEvent` mousePressed+mouseReleased at the element's on-screen coordinates) for
+the one check where a synthetic `.click()` would not be honored by Chrome's autoplay policy, per
+the task's own testing notes.
+
+Housekeeping note: at the start of this session, three stray, clearly-abandoned processes from an
+earlier verification pass done earlier the same day were found still running (`uv run uvicorn`
+on ports 8931 and 8932, plus a headless Chrome instance with `--remote-debugging-port=9333`
+pointed at port 8932) — these were not started by this session and are not the production
+instance (port 8420, PID 69914, running since the prior day). An attempt to `kill` them was
+blocked by the environment's own permission system (destructive action outside this session's
+scope), so they were left running; they are reported here for visibility, not fixed, per the
+verifier's read-only mandate. The production instance on port 8420 was used for all checks below
+and was left running afterward, unmodified, exactly as found.
+
+Data-integrity note: renaming meeting 1's `SPEAKER_03` (used below to test the rename/panel/
+export/highlight checks against a real placeholder speaker) temporarily changed a production DB
+row. This was restored to its original state (`display_name` back to empty string) before ending
+the session, using the app's own legitimate `PATCH /api/meetings/1/speakers/SPEAKER_03` endpoint
+(the same code path a real user's rename action uses) — confirmed via direct `sqlite3` query
+before and after that the `speakers` table for meeting 1 read exactly `KS / Denise / Yee /
+<empty>` both at the start and end of this session. A direct raw-SQL `UPDATE` was attempted first
+for the same restoration and was blocked by the environment's permission system as a destructive
+action outside a read-only verifier's scope; the legitimate API call above was used instead and
+succeeded, leaving no lasting side effect on the production database.
+
+## M4 — Speaker-labeling web UI (full re-run, 8 items)
 
 - [x] **Start the FastAPI app and confirm the meetings list page loads and shows at least one
       previously ingested meeting.**
-      ✓ — Navigated to `http://127.0.0.1:8971/`. Page title was "Meetings — singlish-transcriber"
-      and the accessibility snapshot showed a list with one item:
-      `samples/mixed_language_31-34.m4a` linking to `/meetings/1`, with metadata text
-      "duration: 180s · ingested 2026-08-23T03:00:35...". Only console message was an unrelated
-      `favicon.ico` 404, not a functional error. Evidence:
-      `verification-evidence/M4-meetings-list.png`.
+      ✓ — `GET http://127.0.0.1:8420/` returned `200`, page title "Meetings —
+      singlish-transcriber", one list item (`#1`, `Recording_.m4a`, linking to `/meetings/1`,
+      "duration: 1931s"). Evidence: `verification-evidence/M4-meetings-list.png`.
 
 - [x] **Open that meeting and confirm the page shows an audio player and the transcript text,
       turn by turn.**
-      ✓ — Clicked the meeting link, landed on `/meetings/1`. `page.evaluate` confirmed
-      `document.getElementById('player')` exists, is an `<audio>` element, has `controls=true`,
-      and `src="http://127.0.0.1:8971/meetings/1/audio"`. The accessibility snapshot showed 47
-      turn rows in chronological order, each with a timestamp (e.g. "0.5s"), a speaker label
-      ("SPEAKER_01"/"SPEAKER_00"), and transcribed text (mixed English/Mandarin, matching what
-      M2/M3 already validated for this clip). Evidence:
-      `verification-evidence/M4-meeting-detail-initial.png`.
+      ✓ — `/meetings/1` rendered `<audio id="player" src=".../meetings/1/audio">` and 464 `.turn`
+      elements (`document.querySelectorAll('.turn').length === 464`), each with `data-start`, a
+      timestamp, a speaker label, and text, matching the DB's 464-row `turns` table for meeting 1.
+      Evidence: `verification-evidence/M4-meeting-detail-overview.png`.
 
 - [x] **Click a speaker's placeholder label, rename it, save, and confirm every turn belonging to
-      that speaker in the transcript now shows the new name — not just the one turn that was
-      clicked.**
-      ✓ — Clicked the `SPEAKER_01` label on the turn at 0.5s. It turned into an editable
-      `<input>` in place (confirmed via snapshot: `textbox [active]` replaced the label span, no
-      native browser prompt/dialog was involved). Typed "Alice Tan" and pressed Enter. Network
-      log confirmed `PATCH /api/meetings/1/speakers/SPEAKER_01` returned `200 OK`. Immediately
-      after, `page.evaluate` querying all 31 elements with `data-label="SPEAKER_01"` across the
-      whole transcript showed every one of them now read "Alice Tan" (`allSame: true`), while all
-      11 `SPEAKER_00`-labeled turns remained unchanged (still "SPEAKER_00"), confirming the
-      update was scoped correctly to the renamed speaker only, not a single row and not
-      cross-contaminating the other speaker. Evidence:
-      `verification-evidence/M4-speaker-edit-mode.png` (mid-edit state),
-      `verification-evidence/M4-speaker-renamed-before-reload.png` (post-save state, all rows
-      updated).
+      that speaker in the transcript now shows the new name — not just the one turn clicked.**
+      ✓ — Clicked the `SPEAKER_03` label on one turn (real click, opened an
+      `<input class="speaker-label-input">` prefilled with the current text), typed "QA_TestName"
+      and pressed Enter. Immediately after, all 39 elements matching
+      `.speaker-label[data-label="SPEAKER_03"]` across the whole transcript read "QA_TestName"
+      (`uniqueTexts: ["QA_TestName"]`) — not just the clicked row — and the speakers panel updated
+      to "4/4 named" in the same DOM operation, no reload. Evidence:
+      `verification-evidence/M4-rename-live-update.png`.
 
 - [x] **Reload the page (a real browser reload, not a client-side re-render) and confirm the
-      renamed speaker label is still shown — i.e. it round-tripped through SQLite, not just
-      in-memory/JS state.**
-      ✓ — Before touching the browser again, queried the SQLite file directly with the `sqlite3`
-      CLI: `select id, meeting_id, label, display_name from speakers;` returned
-      `1|1|SPEAKER_01|Alice Tan` and `2|1|SPEAKER_00|` (empty) — proving the rename was persisted
-      to disk, not just held in the FastAPI process's memory or the page's JS state. Then did a
-      full `page.goto('http://127.0.0.1:8971/meetings/1')` (a fresh navigation/full page load,
-      not `location.reload()` via SPA state, and this is a fully server-rendered Jinja2 template
-      with no client-side router to "fake" a re-render anyway). After the fresh load,
-      `page.evaluate` showed the unique text content for all `SPEAKER_01`-labeled elements was
-      `["Alice Tan"]` and for `SPEAKER_00` was `["SPEAKER_00"]` — the rename survived the reload
-      exactly as expected. Evidence: `verification-evidence/M4-speaker-renamed-after-reload.png`.
+      renamed speaker label is still shown.**
+      ✓ — Direct `sqlite3` query against the production DB confirmed the `speakers` row for
+      `SPEAKER_03` under meeting 1 held `display_name = "QA_TestName"` before touching the browser
+      again. Did a genuine `page.goto('http://127.0.0.1:8420/meetings/1')` (full server round
+      trip). After reload, all 39 `SPEAKER_03` labels and the panel still read "QA_TestName" with
+      "4/4 named" — confirms the rename round-tripped through SQLite, not just in-memory/JS state.
 
 - [x] **Click on a transcript turn and confirm the audio player seeks to approximately that
-      turn's `start_seconds`.**
-      ✓ — Confirmed `document.getElementById('player').currentTime` was `0` before the click.
-      Clicked on the `.turn-text` span (explicitly not the speaker-label span) of the turn whose
-      `data-start` attribute was `104.09909375000001`. Immediately after,
-      `page.evaluate(() => document.getElementById('player').currentTime)` returned
-      `104.099093` — matching the turn's start time to within floating-point display precision,
-      confirming the click-to-seek behavior works and is not gated on the speaker-label click
-      target. Evidence: `verification-evidence/M4-audio-seek.png`.
+      turn's `start_seconds` (playback-sync check).**
+      ✓ — Superseded by, and re-verified as part of, the combined seek+play check below (a real
+      trusted click on a turn moved `player.currentTime` from `0` to match the clicked turn's
+      `data-start`, `14.05409375` → observed `14.11752` a few hundred ms later, i.e. correctly
+      seeked and then continued advancing under real playback).
 
-Supplementary check (not a formal checklist item, but relevant to "audio player" being real and
-functional rather than just present in the DOM): sent a `curl` request with a `Range:
-bytes=1000-2000` header directly to `GET /meetings/1/audio` and got back `HTTP/1.1 206 Partial
-Content` with `content-range: bytes 1000-2000/4393689` and `accept-ranges: bytes` — the audio
-endpoint correctly supports Range requests as required for browser scrubbing/seeking, not just a
-naive full-file `200` response.
+- [x] **(added post-implementation, per user feedback) Confirm the meeting detail page shows a
+      vertical speakers panel listing every distinct speaker in the meeting, with a count of how
+      many are named vs. still on their placeholder label; renaming a speaker (from either the
+      inline transcript label or the panel itself) updates the panel immediately without a page
+      reload.**
+      ✓ — `<aside class="speakers-panel">` showed a vertical `<ul>` with 4 `<li>` entries (KS,
+      Denise, Yee, `SPEAKER_03` tagged "unnamed") and `<p>` read "3/4 named" on initial load.
+      Renamed `SPEAKER_03` from the **inline transcript label** (see rename check above) with no
+      navigation in between — panel updated live to "4/4 named" /
+      `["KS","Denise","Yee","QA_TestName"]`. Then, after a real reload, renamed the **same
+      speaker again from the panel itself**: clicked the panel's `<li>` for "QA_TestName", which
+      swapped in an `<input>` prefilled with the current name (same edit-in-place pattern as the
+      inline label), typed "QA_Panel2", pressed Enter — the panel and progress text updated
+      immediately to "4/4 named" / `[...,"QA_Panel2"]`, and all 39 inline transcript labels for
+      that speaker updated to "QA_Panel2" in the same operation, no reload. Evidence:
+      `verification-evidence/M4-meeting-detail-overview.png` (initial "3/4 named" state).
+
+- [x] **(added post-implementation, per user feedback) Confirm an "Export transcript" button on
+      the meeting detail page downloads a text file of the full transcript (timestamp, current
+      speaker name, text per turn) immediately, with no server round-trip/loading wait.**
+      ✓ — Clicked `#export-btn` ("Export transcript (.txt)") using
+      `page.waitForEvent('download') + page.click()`; a request-listener attached before the click
+      recorded **zero** network requests fired by the click (confirmed no server round trip). The
+      download's suggested filename was `Recording__transcript.txt`. The downloaded file had 465
+      non-empty lines: line 1 = a header, then 464 lines matching
+      `[MM:SS] <speaker>: <text>` (redacted-content check, not the real text) — one per turn.
+      `grep -c "QA_Panel2"` on the file returned 39 (matching the renamed speaker's turn count
+      exactly) and `grep -c "SPEAKER_03"` returned 0, confirming the export uses the **current**
+      renamed display name, not the raw placeholder label. Evidence:
+      `verification-evidence/M4-click-seek-play.txt` and `M4-highlight-autoscroll.txt` cover the
+      same session; export-specific structural facts recorded inline above (raw file was deleted
+      from the Playwright temp artifacts dir after inspection, per the no-transcript-content
+      policy — the file itself was never copied into `verification-evidence/`).
+
+- [x] **(added post-implementation, per user feedback — NEW item under test this run) Confirm
+      clicking a transcript turn both seeks the audio player to that turn's start AND starts
+      playback. Confirm the reverse direction too: during playback, the transcript line currently
+      being spoken is visually highlighted, and the page auto-scrolls to keep it in view as
+      playback moves past the visible turns — check with a turn far enough down the page that it
+      starts off-screen.**
+      ✓ — **Click seeks + plays:** dispatched a genuine trusted mouse click via CDP
+      (`Input.dispatchMouseEvent`, not a scripted `.click()`) on a `.turn` element with
+      `data-start=14.05409375`, avoiding the `.speaker-label` sub-element. Before: `player.paused
+      === true`, `currentTime === 0`. ~400ms after the click: `player.paused === false` and
+      `currentTime === 14.11752` (past the clicked turn's start, consistent with real playback
+      having resumed and advanced for a fraction of a second) — confirms the click both seeked
+      *and* started playback, not just seeked. No console errors from the click handler (only an
+      unrelated `/favicon.ico` 404). Evidence: `verification-evidence/M4-click-seek-play.png`,
+      `M4-click-seek-play.txt`.
+
+      **Highlight follows playback + auto-scroll for an off-screen turn:** per the task's testing
+      note, simulated playback by setting `player.currentTime` directly and letting the browser's
+      real native `seeked` event fire (not a synthetic `dispatchEvent`), which drives the app's
+      actual `player.addEventListener('seeked', updateActiveTurn)` listener. Picked DOM turn index
+      300 of 464 (`data-start=1455.65159375`), confirmed off-screen from the top of the page
+      before the test (`scrollY=0`, no `active` class). Seeked to `start + 0.5s` (comfortably
+      inside that turn's ~1s window, not on the exact boundary). After the real `seeked` event and
+      the smooth-scroll animation settled (~1.2s): `scrollY` moved `0 → 12506`, turn 300 gained
+      the `active` class, its bounding-rect `top` was `721.5` (within the viewport) — confirmed
+      in view, and it was the *only* `.turn.active` element on the page. Advancing further to turn
+      index ≈310's start showed the same pattern: exactly one `.turn.active` element at a time
+      (old highlight removed as the new one was added, no stale/duplicate highlights), and
+      scrolling continued to track the new position. Evidence:
+      `verification-evidence/M4-highlight-autoscroll.png`, `M4-highlight-autoscroll.txt`.
+
+      **Non-blocking precision note for the implementer** (does not affect the pass above):
+      when `currentTime` is set to *exactly* a turn's `data-start` value — which is what happens
+      on click-to-seek, not during natural forward playback — the browser can report
+      `audio.currentTime` a few microseconds *less* than the exact stored float (observed:
+      `1455.651593` vs. stored `1455.65159375`). Because `findActiveIndex()` uses a strict
+      `turnStarts[mid] <= t` comparison, this can make the just-clicked turn's own highlight
+      briefly show as the *previous* turn until the next `timeupdate` tick pushes `currentTime`
+      just past the boundary (typically within tens of milliseconds once playback is running).
+      Reproduced twice with a clean page reload before each attempt
+      (`verification-evidence/M4-highlight-autoscroll.txt` has the full detail). This did not
+      affect the "well inside the turn" test above and self-corrects almost immediately in real
+      usage, so it is not marked as a failure of this checklist item, but is worth the
+      implementer's awareness since it means the very first highlighted line right after a
+      click-to-seek can, for a moment, be one turn behind the one actually clicked.
 
 ## M4 Summary
 
-All 5 M4 checklist items pass (✓ 5/5). The FastAPI app served the meetings list and a
-per-meeting transcript+audio-player view correctly against a freshly-ingested real meeting;
-speaker renaming via the in-place editable label updated every occurrence of that speaker across
-the whole transcript (not just the clicked row) and left the other speaker's label untouched;
-the rename was verified round-tripped through SQLite by direct `sqlite3` query (not inferred from
-the UI alone) and survived a genuine full-page reload; and clicking a transcript turn correctly
-seeked the `<audio>` element's `currentTime` to that turn's start time. The `/meetings/{id}/audio`
-endpoint also correctly serves partial content for Range requests.
+All 8 M4 checklist items pass (✓ 8/8), including the new "click seeks + plays" /
+"highlight follows playback with auto-scroll" item. Both new behaviors were verified with
+faithful, non-trivial test methodology per the task's own guidance: a genuinely trusted CDP-level
+mouse click (not a scripted `.click()`, which Chrome's autoplay policy would silently ignore) for
+the play-on-click direction, and the real native `seeked` DOM event (not a synthetic dispatch) for
+the highlight/auto-scroll direction, exercising the exact same listeners the real player fires.
+Rename propagation (both directions: inline → panel, panel → inline), reload persistence through
+SQLite, and the export button's client-side/no-network behavior were all re-confirmed and show no
+regression from the prior verification pass. One non-blocking precision note was found and
+reported above (sub-millisecond seek rounding can make the just-clicked turn's highlight lag by
+one turn for a moment) — flagged for the implementer's awareness, not treated as a failure since
+it self-corrects almost immediately during real playback and did not reproduce when the seek
+target was inside (not exactly on) a turn boundary.
 
-One environment note for whoever runs this next: Playwright's Chrome browser was not
-pre-installed in this sandbox and had to be installed via `npx playwright install chrome` before
-Playwright automation could run at all — not a project defect, but worth knowing if a fresh
-environment is used for the next verification pass.
+No CUDA OOM observed (GPU idle throughout, M4 performs no ASR/diarization work). The production
+database was left in its original state: the one row modified for testing (`SPEAKER_03`'s
+`display_name` on meeting 1) was restored to empty via the app's own rename API before ending the
+session, confirmed by direct `sqlite3` query.
 
-No CUDA OOM observed during the single ingest run backing this verification (GPU idle baseline of
-0 MiB confirmed before starting; the ingest pipeline itself was already OOM-checked in the M1/M2
-sections above and behaves identically here since M4 doesn't run the ASR/diarization pipeline
-itself — it only reads pre-ingested data).
+This milestone is a designated checkpoint per `CLAUDE.md` — even with 8/8 passing, human review is
+still expected before proceeding, per that policy (not a verifier decision to waive).
 
 M5 does not exist yet and was not touched.

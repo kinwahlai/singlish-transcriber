@@ -107,3 +107,17 @@ English/Mandarin/Singlish excerpt correctly, peaked at ~8.15GB VRAM regardless o
       in-memory/JS state.
 - [ ] Click on a transcript turn and confirm the audio player seeks to approximately that turn's
       `start_seconds` (playback-sync check).
+- [ ] (added post-implementation, per user feedback) Confirm the meeting detail page shows a
+      vertical speakers panel listing every distinct speaker in the meeting, with a count of how
+      many are named vs. still on their placeholder label; renaming a speaker (from either the
+      inline transcript label or the panel itself) updates the panel immediately without a page
+      reload.
+- [ ] (added post-implementation, per user feedback) Confirm an "Export transcript" button on the
+      meeting detail page downloads a text file of the full transcript (timestamp, current
+      speaker name, text per turn) immediately, with no server round-trip/loading wait.
+- [ ] (added post-implementation, per user feedback) Confirm clicking a transcript turn both
+      seeks the audio player to that turn's start AND starts playback (not just seeking, as the
+      original playback-sync item above only required). Confirm the reverse direction too:
+      during playback, the transcript line currently being spoken is visually highlighted, and
+      the page auto-scrolls to keep it in view as playback moves past the visible turns — check
+      with a turn far enough down the page that it starts off-screen.
